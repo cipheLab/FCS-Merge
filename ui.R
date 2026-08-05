@@ -1,0 +1,662 @@
+############################################################
+# FCS-Merge Shiny Application
+# User Interface
+############################################################
+
+
+library(shiny)
+library(shinyFiles)
+library(DT)
+library(shinydashboard)
+library(shinythemes)
+
+
+############################################################
+# Shiny global options
+############################################################
+
+options(
+  expressions = 5e5,
+  shiny.maxRequestSize = 100 * 1024^3
+)
+
+
+
+############################################################
+# User Interface
+############################################################
+
+ui <- navbarPage(
+  
+  
+  ##########################################################
+  # Application title and theme
+  ##########################################################
+  
+  title = "FCS-Merge",
+  
+  theme = shinytheme("flatly"),
+  
+  
+  
+  ##########################################################
+  # Custom JavaScript and CSS
+  ##########################################################
+  
+  header = tagList(
+    
+    
+    # Retrieve checked parameters from DataTable
+    tags$script(HTML("
+      Shiny.addCustomMessageHandler(
+        'get_checked_parameters',
+        function(message){
+
+          var values = [];
+
+          $('.param_check:checked').each(function(){
+
+            values.push(
+              $(this).closest('tr')
+              .find('td:eq(1)')
+              .text()
+              .trim()
+            );
+
+          });
+
+          Shiny.setInputValue(
+            'checked_parameters',
+            values,
+            {priority:'event'}
+          );
+
+        }
+      );
+    ")),
+    
+    # Loading spinner overlay
+    tags$div(
+      id = "loading-overlay",
+      tags$div(
+        class = "loader-spinner"
+      )
+    ),
+    
+    
+    tags$script(HTML("
+      
+      $(document).on('shiny:busy', function(){
+        
+        $('#loading-overlay')
+          .css('display','flex');
+        
+      });
+      
+      
+      $(document).on('shiny:idle', function(){
+        
+        $('#loading-overlay')
+          .fadeOut(200);
+        
+      });
+      
+    ")),
+    
+    # Global application styling
+    tags$style(HTML("
+    
+    /* ===========================
+       GLOBAL STYLE
+    =========================== */
+    
+    body {
+      background-color:#f7f9fc;
+      font-family:'Segoe UI', sans-serif;
+    }
+    
+    
+    /* ===========================
+       NAVBAR STYLE
+    =========================== */
+    
+    .navbar {
+      background-color:#243447 !important;
+      border:none;
+      box-shadow:0 2px 8px rgba(0,0,0,0.15);
+    }
+    
+    
+    .navbar-brand {
+      font-weight:600;
+      font-size:22px;
+      color:white !important;
+    }
+    
+    
+    .navbar-nav > li > a {
+      color:#e8edf3 !important;
+    }
+    
+    
+    .navbar-nav > li.active > a {
+      background-color:#3b82f6 !important;
+      color:white !important;
+    }
+    
+    
+    
+    /* ===========================
+       BOX COMPONENTS
+    =========================== */
+    
+    .box {
+      border-radius:14px !important;
+      border:none !important;
+      box-shadow:0 4px 12px rgba(0,0,0,0.08);
+    }
+    
+    
+    .box-header {
+      border-radius:14px 14px 0 0 !important;
+      font-weight:600;
+    }
+    
+    
+    .box-body {
+      padding:22px !important;
+    }
+    
+    
+    
+    /* ===========================
+       BUTTON STYLE
+    =========================== */
+    
+    .btn {
+      border-radius:10px !important;
+      font-weight:500;
+      transition:0.2s;
+    }
+    
+    
+    .btn:hover {
+      transform:translateY(-1px);
+    }
+    
+    
+    .btn-success {
+      background-color:#10b981 !important;
+      border:none !important;
+    }
+    
+    
+    .btn-primary {
+      background-color:#3b82f6 !important;
+      border:none !important;
+    }
+    
+    
+    
+    /* ===========================
+       DATATABLE STYLE
+    =========================== */
+    
+    .dataTables_wrapper {
+      font-size:13px;
+    }
+    
+    
+     table.dataTable {
+    table-layout: fixed !important;
+  }
+
+  table.dataTable th,
+  table.dataTable td {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+    
+
+    
+    
+    .param_check {
+      transform:scale(1.25);
+      cursor:pointer;
+    }
+    
+    
+    0
+    /* ===========================
+       TEXT STYLE
+    =========================== */
+    
+    h3 {
+      color:#243447;
+      font-weight:600;
+    }
+    
+    
+    h4 {
+      color:#374151;
+    }
+    
+    
+    
+    /* ===========================
+       STATUS PANEL
+    =========================== */
+    
+    .merge-status {
+      background:#eef6ff;
+      padding:15px;
+      border-radius:12px;
+    }
+    .btn-raw {
+  background-color: #e5e7eb !important;
+  border-color: #d1d5db !important;
+  color: #374151 !important;
+}
+
+.btn-raw:hover {
+  background-color: #d1d5db !important;
+  color: #111827 !important;
+}
+    
+    /* ===========================
+   GLOBAL LOADING SPINNER
+=========================== */
+
+#loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(255,255,255,0.65);
+  z-index: 99999;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+
+.loader-spinner {
+  width: 70px;
+  height: 70px;
+  border: 8px solid #e5e7eb;
+  border-top: 8px solid #3b82f6;
+  border-radius: 50%;
+  animation: spin-loader 0.8s linear infinite;
+}
+
+
+@keyframes spin-loader {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+    
+    
+    
+    "))
+    
+  ),
+  
+  
+  
+  
+  ##########################################################
+  # TAB 1 : Upload FCS files
+  ##########################################################
+  
+  
+  tabPanel(
+    
+    title = "Upload FCS",
+    icon = icon("folder-open"),
+    
+    
+    br(),
+    
+    
+    # RAW folder selection
+    fluidRow(
+      
+      column(
+        
+        12,
+        
+        box(
+          
+          width = 12,
+          
+          title = "Raw FCS folder",
+          status = "primary",
+          solidHeader = TRUE,
+          
+          
+          shinyDirButton(
+            "raw_dir",
+            "Choose RAW folder",
+            "Select",
+            class = "btn-raw"
+          ),
+          
+          
+          br(),
+          br(),
+          
+          
+          verbatimTextOutput(
+            "raw_path"
+          )
+          
+        )
+        
+      )
+      
+    ),
+    
+    
+    
+    # Correction methods selection
+    fluidRow(
+      
+      column(
+        
+        12,
+        
+        box(
+          
+          width = 12,
+          
+          title = "Processed FCS folder",
+          status = "info",
+          solidHeader = TRUE,
+          
+          
+          actionButton(
+            "add_method",
+            "Add process",
+            icon = icon("plus"),
+            class = "btn-success"
+          ),
+          
+          
+          br(),
+          br(),
+          
+          
+          uiOutput(
+            "methods_ui"
+          )
+          
+        )
+        
+      )
+      
+    ),
+    
+    fluidRow(
+      column(
+        width = 12,
+        style = "margin-top:15px;",
+        uiOutput("validate_button")
+      )
+    )
+    #
+    
+    
+   
+    
+  ),
+  
+  
+  
+  
+  ##########################################################
+  # TAB 2 : Parameter selection
+  ##########################################################
+  
+  
+  tabPanel(
+    
+    title = "Parameters",
+    icon = icon("sliders"),
+    
+    
+    br(),
+    
+    
+    box(
+      
+      width = 6,
+      
+      title = "Parameters selection",
+      status = "primary",
+      solidHeader = TRUE,
+      style = "
+    max-width:1200px;
+    margin:auto;
+  ",
+      
+      p(
+        "Select parameters that will be added to RAW FCS files."
+      ),
+      
+      
+      DTOutput(
+        "parameter_table"
+      ),
+      
+      
+      br(),
+      
+      
+      actionButton(
+        "use_parameters",
+        "Validate selected parameters",
+        icon = icon("check"),
+        class = "btn-primary"
+      )
+      
+    )
+    
+  ),
+  
+  
+  
+  
+  ##########################################################
+  # TAB 3 : Merge execution and report
+  ##########################################################
+  
+  
+  tabPanel(
+    title = "Merge",
+    icon = icon("code-merge"),
+    br(),
+    
+    
+    # Merge summary
+    uiOutput(
+      "analysis_summary"
+    ),
+    
+  
+    
+    
+    # Merge execution panel
+    fluidRow(
+      
+      column(
+        
+        12,
+        
+        box(
+          
+          width = 12,
+          
+          title = "Merge execution",
+          status = "success",
+          solidHeader = TRUE,
+          
+          
+          fluidRow(
+            
+            
+            column(
+              
+              8,
+              
+              h4(
+                icon("code-merge"),
+                " Merge ready"
+              ),
+              
+              p(
+                "Selected parameters will be appended to RAW FCS files."
+              )
+              
+            ),
+            
+            
+            column(
+              
+              4,
+              
+              align = "left",
+              
+              actionButton(
+                "run_merge",
+                "Start Merge",
+                icon = icon("play"),
+                class = "btn-success btn-lg"
+              )
+              
+            )
+            
+          )
+          
+        )
+        
+      )
+      
+    ),
+    
+    
+    
+    br(),
+    
+    
+    
+    # Report output
+    fluidRow(
+      
+      column(
+        
+        12,
+        
+        box(
+          
+          width = 12,
+          
+          title = "Merge report",
+          status = "info",
+          solidHeader = TRUE,
+          
+          
+          div(
+            
+            class = "merge-status",
+            
+            verbatimTextOutput(
+              "merge_status"
+            )
+            
+          )
+          
+        ),
+        
+        
+        downloadButton(
+          "download_report",
+          "Download FCS Merge Report",
+          class = "btn-primary"
+        )
+        
+      )
+      
+    )
+    
+  ),
+  
+
+  
+  ##########################################################
+  # TAB 4 : Visualization
+  ##########################################################
+  
+  
+  tabPanel(
+    
+    title = "Visualization",
+    icon = icon("chart-line"),
+    
+    
+    fluidRow(
+      
+      
+      # File and parameter selection panel
+      box(
+        
+        width = 4,
+        
+        title = "Merged FCS file",
+        status = "primary",
+        solidHeader = TRUE,
+        
+        
+        selectInput(
+          "viz_fcs",
+          "Choose merged FCS",
+          choices = NULL
+        ),
+        
+        
+        uiOutput(
+          "viz_parameters"
+        )
+        
+      ),
+      
+      
+      # Plot panel
+      box(
+        
+        width = 8,
+        
+        title = "Overlay histogram",
+        status = "info",
+        solidHeader = TRUE,
+        
+        
+        plotOutput(
+          "overlay_hist",
+          height = "500px"
+        )
+        
+      )
+      
+    )
+    
+  )
+  
+  
+)
