@@ -706,7 +706,118 @@ server <- function(input, output, session){
       
     }
   )
-  
+  output$validate_parameters_button <- renderUI({
+    
+    
+    # Pas encore de fichiers validés
+    if(!isTRUE(matching_validated()) || is.null(parameter_table_rv())){
+      
+      return(
+        fluidRow(
+          
+          column(
+            12,
+            
+            box(
+              width = 12,
+              title = "Parameters selection",
+              status = "warning",
+              solidHeader = TRUE,
+              
+              h3(
+                icon("exclamation-triangle"),
+                " Please upload files first"
+              ),
+              
+              p(
+                "Go to the Upload FCS tab, select a RAW folder and add at least one process before choosing parameters."
+              )
+              
+            )
+            
+          )
+          
+        )
+      )
+      
+    }
+    
+    
+    # Fichiers OK -> affichage paramètres
+    tagList(
+      
+      p(
+        "Select parameters that will be added to RAW FCS files."
+      ),
+      
+      
+      DTOutput(
+        "parameter_table"
+      ),
+      
+      
+      br(),
+      
+      
+      actionButton(
+        "use_parameters",
+        "Validate selected parameters",
+        icon = icon("check"),
+        class = "btn-primary"
+      )
+      
+    )
+    
+  })
+  output$merge_button_ui <- renderUI({
+    
+    req(parameters_validated())
+    req(matching_validated())
+    
+    fluidRow(
+      
+      column(
+        12,
+        
+        box(
+          width = 12,
+          title = "",
+          status = "success",
+          solidHeader = TRUE,
+          
+          div(
+            style="
+          text-align:center;
+          padding:20px;
+          ",
+            
+            h3(
+              icon("circle-check"),
+              " Ready to merge"
+            ),
+            
+            p(
+              "All selected parameters and files are validated."
+            ),
+            
+            br(),
+            
+            actionButton(
+              "run_merge",
+              "Run FCS merge",
+              icon = icon("play"),
+              class = "btn-success btn-lg"
+            )
+            
+          )
+          
+        )
+        
+      )
+      
+    )
+    
+  })
   get_fcs_parameters <- function(file){
     
     if(length(file)==0 || is.na(file) || !file.exists(file)){

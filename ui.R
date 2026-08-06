@@ -444,40 +444,13 @@ Shiny.addCustomMessageHandler(
     title = "Parameters",
     icon = icon("sliders"),
     
-    
-    br(),
-    
-    
-    box(
+    fluidRow(
       
-      width = 6,
-      
-      title = "Parameters selection",
-      status = "primary",
-      solidHeader = TRUE,
-      style = "
-    max-width:1200px;
-    margin:auto;
-  ",
-      
-      p(
-        "Select parameters that will be added to RAW FCS files."
-      ),
-      
-      
-      DTOutput(
-        "parameter_table"
-      ),
-      
-      
-      br(),
-      
-      
-      actionButton(
-        "use_parameters",
-        "Validate selected parameters",
-        icon = icon("check"),
-        class = "btn-primary"
+      column(
+        12,
+        
+        uiOutput("validate_parameters_button")
+        
       )
       
     )
@@ -496,52 +469,9 @@ Shiny.addCustomMessageHandler(
     
     br(),
     
-    fluidRow(
-      
-      column(
-        12,
-        
-        box(
-          width = 12,
-          title = "",
-          status = "success",
-          solidHeader = TRUE,
-          
-          div(
-            style="
-          text-align:center;
-          padding:20px;
-          ",
-            
-            h3(
-              icon("circle-check"),
-              " Ready to merge"
-            ),
-            
-            p(
-              "All selected parameters and files are validated."
-            ),
-            
-            br(),
-            
-            actionButton(
-              "run_merge",
-              "Run FCS merge",
-              icon = icon("play"),
-              class = "btn-success btn-lg"
-            )
-            
-          )
-          
-        )
-        
-      )
-      
-    ),
+    uiOutput("merge_button_ui"),
     
-    br(),
-    
-    uiOutput("merge_report_ui")
+    br()
     
   ),
 
