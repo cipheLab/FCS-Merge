@@ -7,7 +7,7 @@ library(knitr)
 library(ggplot2)
 library(dplyr)
 library(tidyr)
-
+library(shinyjs)
 
 server <- function(input, output, session){
   parameter_table_rv <- reactiveVal(NULL)
@@ -16,9 +16,10 @@ server <- function(input, output, session){
   matching_rv <- reactiveVal(NULL)
   selected_parameters_rv <- reactiveVal(NULL)
   parameters_validated <- reactiveVal(FALSE)
-  
+  merge_finished <- reactiveVal(FALSE)
+  matching_validated <- reactiveVal(FALSE)
   roots <- c(
-    Home="/mnt/md0/R_D/FCS-Merge"
+    Home="/media/data/html/source/FCS-Merge"
   )
 
   current_dir <- reactiveVal("/")
@@ -32,7 +33,7 @@ server <- function(input, output, session){
     "raw_dir",
     roots=roots
   )
-  
+
   
   output$raw_path <- renderText({
     
@@ -92,7 +93,7 @@ server <- function(input, output, session){
       }
       
       
-      # Cr??ation de la nouvelle m??thode
+   
       id <- next_id()
       next_id(id + 1)
       
@@ -162,7 +163,7 @@ server <- function(input, output, session){
       )
       
       
-      # Sauvegarde du suffixe en temps r??el
+   
       observeEvent(
         input[[paste0("suffix_", id)]],
         {
@@ -684,7 +685,7 @@ server <- function(input, output, session){
         method_paths
       )
       matching_rv(matching)
-      
+      matching_validated(TRUE)
       # ==========================================
       # Affichage uniquement des noms de fichiers
       # ==========================================
@@ -1207,12 +1208,10 @@ Shiny.setInputValue(
     params <- input$checked_parameters
     
     if(is.null(params)){
-      
       params <- character(0)
-      
     }
     
-    if(is.null(params) || length(params)==0){
+    if(length(params)==0){
       
       showNotification(
         "No parameter selected",
@@ -1238,6 +1237,7 @@ Shiny.setInputValue(
       input$raw_dir
     )
     
+    
     raw_files <- list.files(
       raw_path,
       pattern="\\.fcs$",
@@ -1246,33 +1246,76 @@ Shiny.setInputValue(
     )
     
     
+    # ==========================================
+    # Labels affichage avec desc entre parenthèses
+    # ==========================================
+    
+    parameter_table <- parameter_table_rv()
+    
+    parameter_labels <- params
+    
+    if(!is.null(parameter_table)){
+      
+      idx <- match(
+        params,
+        parameter_table$name
+      )
+      
+      desc <- parameter_table$desc[idx]
+      
+      parameter_labels <- ifelse(
+        !is.na(desc) &
+          nzchar(desc),
+        paste0(
+          params,
+          " (",
+          desc,
+          ")"
+        ),
+        params
+      )
+      
+    }
+    
+    
     merge_summary(
       list(
+        
         n_methods = nrow(dat),
+        
         methods = dat$suffix,
+        
         n_files = length(raw_files),
+        
         n_parameters = length(params),
+        
+        # vrais noms utilisés pour le merge
         parameters = unique(params),
         
+        # noms enrichis pour l'affichage
+        parameter_labels = unique(parameter_labels),
+        
+        
         folders = rbind(
+          
           data.frame(
             type = "RAW",
             folder = basename(raw_path),
-            parent = dirname(raw_path),
             suffix = "",
             stringsAsFactors = FALSE
           ),
+          
           data.frame(
             type = "Correction",
             folder = basename(dat$path),
-            parent = dirname(dat$path),
             suffix = dat$suffix,
             stringsAsFactors = FALSE
           )
+          
         )
+        
       )
     )
-    
     
     
     showNotification(
@@ -1284,8 +1327,6 @@ Shiny.setInputValue(
     )
     
   })
-  
-
   output$analysis_summary <- renderUI({
     
     s <- merge_summary()
@@ -1396,7 +1437,7 @@ Shiny.setInputValue(
           status="primary",
           solidHeader=TRUE,
           
-          DTOutput("folders_summary")
+          uiOutput("folders_summary")
         )
         
       ),
@@ -1418,9 +1459,32 @@ Shiny.setInputValue(
         ",
             
             tags$p(
-              paste(
-                s$parameters,
-                collapse=", "
+              div(
+                style="
+  max-height:220px;
+  overflow-y:auto;
+  ",
+                
+                lapply(
+                  s$parameter_labels,
+                  function(x){
+                    
+                    tags$span(
+                      x,
+                      style="
+        display:inline-block;
+        background:#e8f0fe;
+        color:#1a73e8;
+        padding:5px 10px;
+        margin:3px;
+        border-radius:12px;
+        font-size:13px;
+        "
+                    )
+                    
+                  }
+                )
+                
               )
             )
             
@@ -1433,27 +1497,90 @@ Shiny.setInputValue(
     )
     
   })
-  output$folders_summary <- renderDT({
+  output$folders_summary <- renderUI({
     
     s <- merge_summary()
     
     req(s$folders)
     
-    datatable(
-      s$folders,
-      rownames = FALSE,
-      options = list(
-        paging = FALSE,
-        searching = FALSE,
-        dom = 't',
-        columnDefs = list(
-          list(
-            targets = "_all",
-            width = "150px"
-          )
-        )
+    folders <- s$folders
+    
+    
+    tagList(
+      
+      h4(
+        icon("folder-open"),
+        " Input folders"
       ),
-      class = "compact stripe hover"
+      
+      
+      lapply(
+        seq_len(nrow(folders)),
+        function(i){
+          
+          row <- folders[i,]
+          
+          
+          box(
+            
+            width = 12,
+            
+            status = ifelse(
+              row$type=="RAW",
+              "success",
+              "info"
+            ),
+            
+            solidHeader = TRUE,
+            
+            
+            title = tagList(
+              
+              icon(
+                ifelse(
+                  row$type=="RAW",
+                  "database",
+                  "flask"
+                )
+              ),
+              
+              ifelse(
+                row$type=="RAW",
+                "RAW files",
+                paste(
+                  "Method:",
+                  row$suffix
+                )
+              )
+              
+            ),
+            
+            
+            div(
+              
+              style="
+            font-size:15px;
+            word-break:break-all;
+            ",
+              
+              strong("Folder: "),
+              
+              basename(row$folder),
+              
+              br(),
+              
+              tags$small(
+                row$folder
+              )
+              
+            )
+            
+          )
+          
+        }
+        
+      )
+      
     )
     
   })
@@ -2025,7 +2152,7 @@ Shiny.setInputValue(
       )
       
     })
-    
+    merge_finished(TRUE)
     
   })
   # ==================================================
@@ -2065,6 +2192,51 @@ Shiny.setInputValue(
     )
     
   })
+  
+  output$merge_report_ui <- renderUI({
+    
+    req(merge_finished())
+    
+    fluidRow(
+      
+      column(
+        
+        12,
+        
+        box(
+          
+          width = 12,
+          
+          title = "Merge report",
+          status = "info",
+          solidHeader = TRUE,
+          
+          
+          div(
+            
+            class = "merge-status",
+            
+            verbatimTextOutput(
+              "merge_status"
+            )
+            
+          )
+          
+        ),
+        
+        
+        downloadButton(
+          "download_report",
+          "Generate FCS Merge Report",
+          icon = icon("download"),
+          class = "btn-primary"
+        )      )
+      
+    ) 
+    
+  })
+  
+
   # ==================================================
   # Param??tres disponibles
   # ==================================================
@@ -2102,9 +2274,8 @@ Shiny.setInputValue(
       
     })
     
-    
-    # IMPORTANT :
-    # valeur envoy??e ?? Shiny = nom colonne r??el
+
+
     names(labels) <- params
     
     
@@ -2130,6 +2301,8 @@ Shiny.setInputValue(
     )
     
   })
+  
+  
   
   output$overlay_hist <- renderPlot({
     
@@ -2287,52 +2460,63 @@ Shiny.setInputValue(
   }, width = 700, height = 700)
   
   
-  output$download_report <- downloadHandler(
-    
-    filename = function(){
+ 
+    output$download_report <- downloadHandler(
       
-      paste0(
-        "FCS_Merge_Report_",
-        Sys.Date(),
-        ".html"
-      )
-      
-    },
-    
-    
-    content = function(file){
-      
-      matching <- matching_rv()
-      params <- selected_parameters_rv()
-      
-      req(matching)
-      req(params)
+      filename = function(){
+        
+        print("DOWNLOAD START")
+        
+        paste0(
+          "FCS_Merge_Report_",
+          Sys.Date(),
+          ".html"
+        )
+        
+      },
       
       
-      out_dir <- file.path(
-        dirname(matching$raw_file[1]),
-        "Merged_FCS"
-      )
-      
-      
-      # Cr??ation du rapport uniquement ici
-      report <- create_merge_report(
-        matching = matching,
-        methods = names(matching)[-1],
-        parameters = params,
-        out_dir = out_dir
-      )
-      
-      
-      # Envoi du fichier au navigateur
-      file.copy(
-        report,
-        file,
-        overwrite = TRUE
-      )
-      
-    }
-  )
+      content = function(file){
+        
+        print("CREATING REPORT")
+        
+        matching <- matching_rv()
+        params <- selected_parameters_rv()
+        
+        print(matching)
+        print(params)
+        
+        req(matching)
+        req(params)
+        
+        
+        out_dir <- file.path(
+          dirname(matching$raw_file[1]),
+          "Merged_FCS"
+        )
+        
+        
+        report <- create_merge_report(
+          matching = matching,
+          methods = names(matching)[-1],
+          parameters = params,
+          out_dir = out_dir
+        )
+        
+        
+        print(report)
+        
+        
+        file.copy(
+          report,
+          file,
+          overwrite=TRUE
+        )
+        
+        print("REPORT SENT")
+        
+      }
+    )
 }
 
 

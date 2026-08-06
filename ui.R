@@ -9,7 +9,7 @@ library(shinyFiles)
 library(DT)
 library(shinydashboard)
 library(shinythemes)
-
+library(shinyjs)
 
 ############################################################
 # Shiny global options
@@ -20,14 +20,14 @@ options(
   shiny.maxRequestSize = 100 * 1024^3
 )
 
-
+useShinyjs()
 
 ############################################################
 # User Interface
 ############################################################
 
 ui <- navbarPage(
-  
+
   
   ##########################################################
   # Application title and theme
@@ -74,7 +74,7 @@ ui <- navbarPage(
         }
       );
     ")),
-    
+
     # Loading spinner overlay
     tags$div(
       id = "loading-overlay",
@@ -102,7 +102,21 @@ ui <- navbarPage(
       });
       
     ")),
-    
+    tags$script("
+Shiny.addCustomMessageHandler(
+ 'start_report_download',
+ function(message){
+
+   $('#report_spinner').show();
+
+   setTimeout(function(){
+
+     $('#report_spinner').hide();
+
+   },5000);
+
+ });
+"),
     # Global application styling
     tags$style(HTML("
     
@@ -472,74 +486,49 @@ ui <- navbarPage(
   
   
   
-  
-  ##########################################################
-  # TAB 3 : Merge execution and report
-  ##########################################################
-  
-  
   tabPanel(
     title = "Merge",
     icon = icon("code-merge"),
+    
     br(),
     
+    uiOutput("analysis_summary"),
     
-    # Merge summary
-    uiOutput(
-      "analysis_summary"
-    ),
+    br(),
     
-  
-    
-    
-    # Merge execution panel
     fluidRow(
       
       column(
-        
         12,
         
         box(
-          
           width = 12,
-          
-          title = "Merge execution",
+          title = "",
           status = "success",
           solidHeader = TRUE,
           
-          
-          fluidRow(
+          div(
+            style="
+          text-align:center;
+          padding:20px;
+          ",
             
-            
-            column(
-              
-              8,
-              
-              h4(
-                icon("code-merge"),
-                " Merge ready"
-              ),
-              
-              p(
-                "Selected parameters will be appended to RAW FCS files."
-              )
-              
+            h3(
+              icon("circle-check"),
+              " Ready to merge"
             ),
             
+            p(
+              "All selected parameters and files are validated."
+            ),
             
-            column(
-              
-              4,
-              
-              align = "left",
-              
-              actionButton(
-                "run_merge",
-                "Start Merge",
-                icon = icon("play"),
-                class = "btn-success btn-lg"
-              )
-              
+            br(),
+            
+            actionButton(
+              "run_merge",
+              "Run FCS merge",
+              icon = icon("play"),
+              class = "btn-success btn-lg"
             )
             
           )
@@ -550,53 +539,11 @@ ui <- navbarPage(
       
     ),
     
-    
-    
     br(),
     
-    
-    
-    # Report output
-    fluidRow(
-      
-      column(
-        
-        12,
-        
-        box(
-          
-          width = 12,
-          
-          title = "Merge report",
-          status = "info",
-          solidHeader = TRUE,
-          
-          
-          div(
-            
-            class = "merge-status",
-            
-            verbatimTextOutput(
-              "merge_status"
-            )
-            
-          )
-          
-        ),
-        
-        
-        downloadButton(
-          "download_report",
-          "Download FCS Merge Report",
-          class = "btn-primary"
-        )
-        
-      )
-      
-    )
+    uiOutput("merge_report_ui")
     
   ),
-  
 
   
   ##########################################################
@@ -621,19 +568,20 @@ ui <- navbarPage(
         title = "Merged FCS file",
         status = "primary",
         solidHeader = TRUE,
-        
-        
-        selectInput(
-          "viz_fcs",
-          "Choose merged FCS",
-          choices = NULL
-        ),
-        
-        
-        uiOutput(
-          "viz_parameters"
-        )
-        
+        # Report output (appears after merge completion)
+        uiOutput("merge_report_ui")
+        # 
+        # selectInput(
+        #   "viz_fcs",
+        #   "Choose merged FCS",
+        #   choices = NULL
+        # ),
+        # 
+        # 
+        # uiOutput(
+        #   "viz_parameters"
+        # )
+        # 
       ),
       
       
@@ -657,6 +605,5 @@ ui <- navbarPage(
     )
     
   )
-  
-  
+
 )
