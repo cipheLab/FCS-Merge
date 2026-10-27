@@ -19,15 +19,15 @@ server <- function(input, output, session){
   merge_finished <- reactiveVal(FALSE)
   matching_validated <- reactiveVal(FALSE)
   roots <- c(
-    Home="/media/data/html/source/FCS-Merge"
+    Home = normalizePath("/mnt/md0/R_D")
   )
-
   current_dir <- reactiveVal("/")
   last_selected_dir <- reactiveVal("/")
+  
   # ==================================================
   # RAW
   # ==================================================
-  
+
   shinyDirChoose(
     input,
     "raw_dir",
@@ -92,7 +92,6 @@ server <- function(input, output, session){
         
       }
       
-      
    
       id <- next_id()
       next_id(id + 1)
@@ -111,16 +110,13 @@ server <- function(input, output, session){
    
       methods(dat)
       
-      
-      # Cr??ation du s??lecteur de dossier
+    
       shinyDirChoose(
         input,
         paste0("method_dir_", id),
         roots = roots
       )
       
-      
-      # Sauvegarde du chemin s??lectionn??
       observeEvent(
         input[[paste0("method_dir_", id)]],
         {
@@ -183,9 +179,7 @@ server <- function(input, output, session){
         },
         ignoreInit = TRUE
       )
-      
-      
-      # Affichage du chemin
+
       output[[paste0("method_path_", id)]] <- renderText({
         
         dat <- methods()
@@ -709,7 +703,7 @@ server <- function(input, output, session){
   output$validate_parameters_button <- renderUI({
     
     
-    # Pas encore de fichiers validés
+    # Pas encore de fichiers valid??s
     if(!isTRUE(matching_validated()) || is.null(parameter_table_rv())){
       
       return(
@@ -743,7 +737,7 @@ server <- function(input, output, session){
     }
     
     
-    # Fichiers OK -> affichage paramètres
+    # Fichiers OK -> affichage param??tres
     tagList(
       
       p(
@@ -1358,7 +1352,7 @@ Shiny.setInputValue(
     
     
     # ==========================================
-    # Labels affichage avec desc entre parenthèses
+    # Labels affichage avec desc entre parenth??ses
     # ==========================================
     
     parameter_table <- parameter_table_rv()
@@ -1400,7 +1394,7 @@ Shiny.setInputValue(
         
         n_parameters = length(params),
         
-        # vrais noms utilisés pour le merge
+        # vrais noms utilis??s pour le merge
         parameters = unique(params),
         
         # noms enrichis pour l'affichage
@@ -1449,43 +1443,16 @@ Shiny.setInputValue(
           column(
             12,
             box(
-              width=12,
-              title="Merge summary",
-              status="warning",
-              solidHeader=TRUE,
-              
-              h3(
-                icon("exclamation-triangle"),
-                " Please choose markers"
-              ),
-              
-              p(
-                "Go to Parameters tab, select markers and click 'Use selected parameters'."
-              )
-            )
-          )
-        )
-      )
-      
-    }
-    
-    
-    # R??cup??ration du r??sum?? apr??s validation
-    s <- merge_summary()
-    
-    if (is.null(s)) {
-      
-      return(
-        fluidRow(
-          column(
-            12,
-            box(
               width = 12,
               title = "Merge summary",
               status = "warning",
               solidHeader = TRUE,
               
-              h3("No analysis available")
+              h4("Parameters not selected"),
+              
+              p(
+                "Go to the Parameters tab, select markers and validate your selection."
+              )
             )
           )
         )
@@ -1498,40 +1465,64 @@ Shiny.setInputValue(
       
       column(
         4,
-        
-        valueBox(
-          s$n_methods,
-          "Methods suffixes",
-          icon = icon("wand-magic-sparkles"),
-          color = "blue"
+        box(
+          width = 12,
+          title = "Methods",
+          status = "primary",
+          solidHeader = TRUE,
+          
+          h2(
+            s$n_methods,
+            style="text-align:center;"
+          ),
+          
+          p(
+            "processing methods",
+            style="text-align:center;color:#666;"
+          )
         )
-        
       ),
       
       
       column(
         4,
-        
-        valueBox(
-          s$n_files,
-          "RAW files",
-          icon = icon("file"),
-          color = "green"
+        box(
+          width = 12,
+          title = "RAW files",
+          status = "success",
+          solidHeader = TRUE,
+          
+          h2(
+            s$n_files,
+            style="text-align:center;"
+          ),
+          
+          p(
+            "files detected",
+            style="text-align:center;color:#666;"
+          )
         )
-        
       ),
       
       
       column(
         4,
-        
-        valueBox(
-          s$n_parameters,
-          "Parameters added",
-          icon = icon("flask"),
-          color = "purple"
+        box(
+          width = 12,
+          title = "Parameters",
+          status = "info",
+          solidHeader = TRUE,
+          
+          h2(
+            s$n_parameters,
+            style="text-align:center;"
+          ),
+          
+          p(
+            "markers selected",
+            style="text-align:center;color:#666;"
+          )
         )
-        
       )
       
     )
@@ -1543,12 +1534,13 @@ Shiny.setInputValue(
         6,
         
         box(
-          width=12,
-          title="Folders",
-          status="primary",
-          solidHeader=TRUE,
+          width = 12,
+          title = "Input folders",
+          status = "primary",
+          solidHeader = TRUE,
           
-          uiOutput("folders_summary")
+          tableOutput("folders_table")
+          
         )
         
       ),
@@ -1558,44 +1550,29 @@ Shiny.setInputValue(
         6,
         
         box(
-          width=12,
-          title="Selected parameters",
-          status="info",
-          solidHeader=TRUE,
+          width = 12,
+          title = paste0(
+            "Selected parameters (",
+            s$n_parameters,
+            ")"
+          ),
+          status = "primary",
+          solidHeader = TRUE,
           
           div(
             style="
-        max-height:200px;
-        overflow-y:auto;
-        ",
+          max-height:250px;
+          overflow-y:auto;
+          ",
             
-            tags$p(
-              div(
-                style="
-  max-height:220px;
-  overflow-y:auto;
-  ",
-                
-                lapply(
-                  s$parameter_labels,
-                  function(x){
-                    
-                    tags$span(
-                      x,
-                      style="
-        display:inline-block;
-        background:#e8f0fe;
-        color:#1a73e8;
-        padding:5px 10px;
-        margin:3px;
-        border-radius:12px;
-        font-size:13px;
-        "
-                    )
-                    
-                  }
-                )
-                
+            tags$ul(
+              lapply(
+                s$parameter_labels,
+                function(x){
+                  
+                  tags$li(x)
+                  
+                }
               )
             )
             
@@ -1616,85 +1593,41 @@ Shiny.setInputValue(
     
     folders <- s$folders
     
-    
-    tagList(
-      
-      h4(
-        icon("folder-open"),
-        " Input folders"
-      ),
-      
-      
-      lapply(
-        seq_len(nrow(folders)),
-        function(i){
-          
-          row <- folders[i,]
-          
-          
-          box(
-            
-            width = 12,
-            
-            status = ifelse(
-              row$type=="RAW",
-              "success",
-              "info"
-            ),
-            
-            solidHeader = TRUE,
-            
-            
-            title = tagList(
-              
-              icon(
-                ifelse(
-                  row$type=="RAW",
-                  "database",
-                  "flask"
-                )
-              ),
-              
-              ifelse(
-                row$type=="RAW",
-                "RAW files",
-                paste(
-                  "Method:",
-                  row$suffix
-                )
-              )
-              
-            ),
-            
-            
-            div(
-              
-              style="
-            font-size:15px;
-            word-break:break-all;
-            ",
-              
-              strong("Folder: "),
-              
-              basename(row$folder),
-              
-              br(),
-              
-              tags$small(
-                row$folder
-              )
-              
-            )
-            
-          )
-          
-        }
-        
-      )
-      
-    )
+    tableOutput("folders_table")
     
   })
+  
+  
+  output$folders_table <- renderTable({
+    
+    s <- merge_summary()
+    
+    req(s$folders)
+    
+    data.frame(
+      Type = ifelse(
+        s$folders$type == "RAW",
+        "RAW",
+        "Method"
+      ),
+      
+      Suffix = ifelse(
+        s$folders$type == "RAW",
+        "-",
+        s$folders$suffix
+      ),
+      
+      Folder = basename(s$folders$folder),
+      
+      Parent_path = dirname(s$folders$folder),
+      
+      stringsAsFactors = FALSE
+    )
+    
+  },
+  striped = TRUE,
+  bordered = TRUE,
+  hover = TRUE)
   
   merge_one_fcs <- function(raw_file,
                             method_files,
@@ -2523,8 +2456,7 @@ Shiny.setInputValue(
     
     
     for(i in seq_along(dens)){
-      
-      # petit d??calage vertical
+
       yshift <- (i-1) * offset
       
       
@@ -2628,6 +2560,14 @@ Shiny.setInputValue(
         
       }
     )
+    
+    
+    observeEvent(input$summaryTable,{
+      req(input$report)
+      
+      
+      
+    })
 }
 
 

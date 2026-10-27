@@ -28,7 +28,7 @@ useShinyjs()
 
 ui <- navbarPage(
 
-  
+
   ##########################################################
   # Application title and theme
   ##########################################################
@@ -36,8 +36,6 @@ ui <- navbarPage(
   title = "FCS-Merge",
   
   theme = shinytheme("flatly"),
-  
-  
   
   ##########################################################
   # Custom JavaScript and CSS
@@ -499,19 +497,19 @@ Shiny.addCustomMessageHandler(
         status = "primary",
         solidHeader = TRUE,
         # Report output (appears after merge completion)
-        uiOutput("merge_report_ui")
-        # 
-        # selectInput(
-        #   "viz_fcs",
-        #   "Choose merged FCS",
-        #   choices = NULL
-        # ),
-        # 
-        # 
-        # uiOutput(
-        #   "viz_parameters"
-        # )
-        # 
+        uiOutput("merge_report_ui"),
+
+        selectInput(
+          "viz_fcs",
+          "Choose merged FCS",
+          choices = NULL
+        ),
+        uiOutput("transformation"),
+
+        uiOutput(
+          "viz_parameters"
+        )
+
       ),
       
       
@@ -523,7 +521,7 @@ Shiny.addCustomMessageHandler(
         title = "Overlay histogram",
         status = "info",
         solidHeader = TRUE,
-        
+        DTOutput("summaryTable"),
         
         plotOutput(
           "overlay_hist",
