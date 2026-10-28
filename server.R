@@ -160,25 +160,6 @@ server <- function(input, output, session){
       
       
    
-      observeEvent(
-        input[[paste0("suffix_", id)]],
-        {
-          
-          dat <- methods()
-          
-          idx <- match(id, dat$id)
-          
-          if(!is.na(idx)){
-            
-            dat$suffix[idx] <- input[[paste0("suffix_", id)]]
-            
-            methods(dat)
-            
-          }
-          
-        },
-        ignoreInit = TRUE
-      )
 
       output[[paste0("method_path_", id)]] <- renderText({
         
@@ -651,6 +632,7 @@ server <- function(input, output, session){
     
   }
   
+  
   observeEvent(
     input$check_files,
     {
@@ -660,46 +642,52 @@ server <- function(input, output, session){
         input$raw_dir
       )
       
-      
       method_paths <- list()
       
       dat <- methods()
       
-      
-      for(i in dat$id){
+      # Récupérer les suffixes saisis sans actualiser
+      # l'interface à chaque caractère
+      for (i in dat$id) {
         
-        method_paths[[dat$suffix[i]]] <-
-          dat$path[i]
+        value <- input[[paste0("suffix_", i)]]
         
+        if (!is.null(value)) {
+          dat$suffix[dat$id == i] <- value
+        }
       }
       
+      # Mettre à jour les suffixes dans le tableau réactif
+      methods(dat)
+      
+      # Construire les chemins avec les suffixes à jour
+      for (i in dat$id) {
+        
+        method_paths[[dat$suffix[dat$id == i]]] <-
+          dat$path[dat$id == i]
+        
+      }
       
       matching <- match_fcs_files(
         raw_path,
         method_paths
       )
+      
       matching_rv(matching)
       matching_validated(TRUE)
-      # ==========================================
-      # Affichage uniquement des noms de fichiers
-      # ==========================================
       
+      # Affichage uniquement des noms de fichiers
       matching_display <- matching
       
-      
-      for(col in names(matching_display)){
-        
+      for (col in names(matching_display)) {
         matching_display[[col]] <- basename(
           matching_display[[col]]
         )
-        
       }
-      
-      
-
       
     }
   )
+  
   output$validate_parameters_button <- renderUI({
     
     

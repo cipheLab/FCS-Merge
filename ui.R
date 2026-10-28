@@ -3,7 +3,6 @@
 # User Interface
 ############################################################
 
-
 library(shiny)
 library(shinyFiles)
 library(DT)
@@ -28,7 +27,6 @@ useShinyjs()
 
 ui <- navbarPage(
 
-
   ##########################################################
   # Application title and theme
   ##########################################################
@@ -42,7 +40,7 @@ ui <- navbarPage(
   ##########################################################
   
   header = tagList(
-    
+ 
     
     # Retrieve checked parameters from DataTable
     tags$script(HTML("
@@ -80,7 +78,7 @@ ui <- navbarPage(
         class = "loader-spinner"
       )
     ),
-    
+  
     
     tags$script(HTML("
       
@@ -315,7 +313,6 @@ Shiny.addCustomMessageHandler(
 }
     
     
-    
     "))
     
   ),
@@ -414,7 +411,7 @@ Shiny.addCustomMessageHandler(
       )
       
     ),
-    
+
     fluidRow(
       column(
         width = 12,
@@ -422,16 +419,10 @@ Shiny.addCustomMessageHandler(
         uiOutput("validate_button")
       )
     )
-    #
-    
-    
-   
-    
+
   ),
   
-  
-  
-  
+
   ##########################################################
   # TAB 2 : Parameter selection
   ##########################################################
@@ -454,7 +445,6 @@ Shiny.addCustomMessageHandler(
     )
     
   ),
-  
   
   
   tabPanel(
@@ -522,7 +512,6 @@ Shiny.addCustomMessageHandler(
         status = "info",
         solidHeader = TRUE,
         DTOutput("summaryTable"),
-        
         plotOutput(
           "overlay_hist",
           height = "500px"
