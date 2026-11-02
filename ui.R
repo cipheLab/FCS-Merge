@@ -474,7 +474,6 @@ Shiny.addCustomMessageHandler(
   tabPanel(
     title = "Visualization",
     icon = icon("chart-line"),
-    
     fluidRow(
       column(
         width = 4,
@@ -541,7 +540,7 @@ Shiny.addCustomMessageHandler(
               numericInput(
                 "ylim_min",
                 "Y-axis minimum",
-                value = 0
+                value =0
               )
             ),
             column(
@@ -555,21 +554,15 @@ Shiny.addCustomMessageHandler(
           ),
           
           checkboxInput(
-            "show_contour",
-            "Show density contours",
-            value = FALSE
+            "density",
+            "Color by density",
+            value = TRUE
           ),
-          
-          checkboxInput(
-            "density_overlay",
-            "Show marginal density curves",
-            value = FALSE
-          ),
-          
+   
           plotOutput(
             "plot_dens",
-            width = "600px",
-            height = "600px",
+            width = "800px",
+            height = "800px",
           )
         ),
         
@@ -583,7 +576,9 @@ Shiny.addCustomMessageHandler(
           
           plotOutput(
             "overlay_hist",
-            height = "500px",
+            height = "600px",
+            width="600px"
+            
             
           )
         )

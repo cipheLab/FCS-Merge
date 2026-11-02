@@ -10,6 +10,8 @@ library(tidyr)
 library(shinyjs)
 library(rsconnect)
 
+
+
 server <- function(input, output, session){
   parameter_table_rv <- reactiveVal(NULL)
   merge_summary <- reactiveVal(NULL)
@@ -24,6 +26,36 @@ server <- function(input, output, session){
   )
   current_dir <- reactiveVal("/") 
   last_selected_dir <- reactiveVal("/")
+  
+  
+  get_transformed_fcs <- function(fcs, channels) {
+    
+    fcs_plot <- fcs
+    
+    if (isTRUE(input$apply_arcsinh)) {
+      
+      cofactor <- input$arcsinh_cofactor
+      
+      validate(
+        need(
+          length(cofactor) == 1 &&
+            is.finite(cofactor) &&
+            cofactor > 0,
+          "The arcsinh cofactor must be a positive number."
+        )
+      )
+      
+      expr <- flowCore::exprs(fcs_plot)
+      
+      expr[, channels] <- asinh(
+        expr[, channels, drop = FALSE] / cofactor
+      )
+      
+      flowCore::exprs(fcs_plot) <- expr
+    }
+    
+    return(fcs_plot)
+  }
   
   # ==================================================
   # RAW
@@ -309,7 +341,6 @@ server <- function(input, output, session){
             )
             
           ),
-          
           
           column(
             4,
@@ -631,7 +662,6 @@ server <- function(input, output, session){
     results
     
   }
-  
   
   observeEvent(
     input$check_files,
@@ -2387,6 +2417,11 @@ Shiny.setInputValue(
   # PLOT DENSITY FLOWDENSITY
   # ==================================================
   
+  
+  # ==================================================
+  # PLOT DENSITY AVEC densCols()
+  # ==================================================
+  
   output$plot_dens <- renderPlot({
     
     req(
@@ -2408,7 +2443,6 @@ Shiny.setInputValue(
       need(file.exists(f), "Merged FCS file not found.")
     )
     
-    # Read merged FCS
     fcs <- flowCore::read.FCS(
       f,
       transformation = FALSE,
@@ -2424,6 +2458,10 @@ Shiny.setInputValue(
       )
     )
     
+    # --------------------------------
+    # Récupération des valeurs
+    # --------------------------------
+    
     dat <- flowCore::exprs(fcs)[, channels, drop = FALSE]
     
     valid <- apply(
@@ -2435,63 +2473,113 @@ Shiny.setInputValue(
     validate(
       need(sum(valid) >= 20, "Not enough valid events to plot.")
     )
- 
-    fcs_plot <- fcs[valid, ]
- 
     
-    # ==========================================
-    # ARCSINH TRANSFORMATION
-    # ==========================================
+    x_vals <- dat[valid, 1]
+    y_vals <- dat[valid, 2]
     
-    cofactor <- input$arcsinh_cofactor
+    # --------------------------------
+    # Arcsinh transformation
+    # --------------------------------
+    
+    cofactor <- 150
+    
+    if (isTRUE(input$apply_arcsinh)) {
+      
+      cofactor <- input$arcsinh_cofactor
+      
+      validate(
+        need(
+          length(cofactor) == 1 &&
+            is.finite(cofactor) &&
+            cofactor > 0,
+          "The arcsinh cofactor must be positive."
+        )
+      )
+      
+      x_vals <- asinh(x_vals / cofactor)
+      y_vals <- asinh(y_vals / cofactor)
+      
+    }
+    
+    # --------------------------------
+    # Axis limits
+    # --------------------------------
+    
+    x_min <- input$xlim_min
+    x_max <- input$xlim_max
+    y_min <- input$ylim_min
+    y_max <- input$ylim_max
     
     validate(
       need(
-        is.finite(cofactor) && cofactor > 0,
-        "The arcsinh cofactor must be a positive number."
+        all(is.finite(c(x_min, x_max, y_min, y_max))),
+        "Axis limits must be finite numbers."
+      ),
+      need(
+        x_min < x_max && y_min < y_max,
+        "Axis minimum must be smaller than axis maximum."
       )
     )
     
     if (isTRUE(input$apply_arcsinh)) {
       
-      expr <- flowCore::exprs(fcs_plot)
+      plot_xlim <- asinh(c(x_min, x_max) / cofactor)
+      plot_ylim <- asinh(c(y_min, y_max) / cofactor)
       
-      expr[, channels] <- asinh(
-        expr[, channels, drop = FALSE] / cofactor
+    } else {
+      
+      plot_xlim <- c(x_min, x_max)
+      plot_ylim <- c(y_min, y_max)
+      
+    }
+    
+    # --------------------------------
+    # Couleurs selon la densité
+    # --------------------------------
+    if (input$density){
+      
+      cols <- grDevices::densCols(
+        x_vals,
+        y_vals,
+        colramp = colorRampPalette(
+          c(
+            "blue",
+            "turquoise",
+            "green",
+            "yellow",
+            "orange",
+            "red"
+          )
+        )
       )
       
-      flowCore::exprs(fcs_plot) <- expr
+     
+      
+    }else{
+      cols="black"
     }
-    flowDensity::plotDens(
-      fcs_plot,
-      channels = channels,
+    # --------------------------------
+    # Scatter plot avec densité
+    # --------------------------------
+    
+    plot(
+      x_vals,
+      y_vals,
+      pch = 16,
+      cex = 0.5,
+      col = cols,
+      
+      xlab = input$marker_x,
+      ylab = input$marker_y,
+      
       main = paste(
         input$marker_x,
         "vs",
         input$marker_y
       ),
-      xlim = if (isTRUE(input$apply_arcsinh)) {
-        asinh(c(input$xlim_min, input$xlim_max) / cofactor)
-      } else {
-        c(input$xlim_min, input$xlim_max)
-      },
       
-      ylim = if (isTRUE(input$apply_arcsinh)) {
-        asinh(c(input$ylim_min, input$ylim_max) / cofactor)
-      } else {
-        c(input$ylim_min, input$ylim_max)
-      },
-      xlab = input$marker_x,
-      ylab = input$marker_y,
-      pch = ".",
-      cex = 0.7,
-      show.contour = isTRUE(input$show_contour),
-      density.overlay = if (isTRUE(input$density_overlay)) {
-        c(TRUE, TRUE)
-      } else {
-        c(FALSE, FALSE)
-      },
-      verbose = FALSE
+      xlim = plot_xlim,
+      ylim = plot_ylim
     )
     
   }, res = 110)
@@ -2504,12 +2592,10 @@ Shiny.setInputValue(
       input$viz_markers
     )
     
-  
     f <- file.path(
       viz_dir(),
       input$viz_fcs
     )
-    
     
     fcs <- read.FCS(
       f,
@@ -2517,42 +2603,65 @@ Shiny.setInputValue(
       truncate_max_range = FALSE
     )
     
-    
     dat <- as.data.frame(exprs(fcs))
     
     markers <- input$viz_markers
     
+    # Arcsinh cofactor validation
+    if (isTRUE(input$apply_arcsinh)) {
+      
+      cofactor <- input$arcsinh_cofactor
+      
+      validate(
+        need(
+          length(cofactor) == 1 &&
+            is.finite(cofactor) &&
+            cofactor > 0,
+          "The arcsinh cofactor must be a positive number."
+        )
+      )
+    }
     
+    # Transform marker intensities
     values <- lapply(
       markers,
-      function(m){
+      function(m) {
         
-        if(!m %in% colnames(dat))
+        if (!m %in% colnames(dat))
           return(NULL)
         
         x <- dat[[m]]
+        
         x <- x[is.finite(x)]
         
-        if(length(x) < 10)
+        if (length(x) < 10)
           return(NULL)
         
-        log10(x + 1)
-        
+        if (isTRUE(input$apply_arcsinh)) {
+          
+          # Arcsinh transformation
+          asinh(x / cofactor)
+          
+        } else {
+          
+          # Original log10 transformation
+          log10(x + 1)
+          
+        }
       }
     )
-    
-    
     keep <- !sapply(values, is.null)
     
     values <- values[keep]
+    
     markers <- markers[keep]
     
     req(length(values) > 0)
     
-    
+    # Density estimation
     dens <- lapply(
       values,
-      function(x){
+      function(x) {
         density(
           x,
           n = 512,
@@ -2561,15 +2670,12 @@ Shiny.setInputValue(
       }
     )
     
-    
     names(dens) <- markers
     
-    
     xlim <- range(
-      unlist(lapply(dens, function(d)d$x)),
+      unlist(lapply(dens, function(d) d$x)),
       finite = TRUE
     )
-    
     
     ymax <- max(
       sapply(
@@ -2578,16 +2684,13 @@ Shiny.setInputValue(
       )
     )
     
-    
-    # l??ger d??calage uniquement
+    # Vertical offset
     offset <- ymax * 0.15
-    
     
     cols <- rainbow(
       length(dens),
       alpha = 0.35
     )
-    
     
     plot(
       dens[[1]]$x,
@@ -2599,15 +2702,17 @@ Shiny.setInputValue(
         ymax + offset * length(dens)
       ),
       main = "Overlay density plot",
-      xlab = "log10 intensity",
+      xlab = if (isTRUE(input$apply_arcsinh)) {
+        paste0("Arcsinh intensity (cofactor = ", cofactor, ")")
+      } else {
+        "log10 intensity"
+      },
       ylab = "Density"
     )
     
-    
-    for(i in seq_along(dens)){
-
-      yshift <- (i-1) * offset
+    for (i in seq_along(dens)) {
       
+      yshift <- (i - 1) * offset
       
       polygon(
         c(
@@ -2625,16 +2730,13 @@ Shiny.setInputValue(
         border = NA
       )
       
-      
       lines(
         dens[[i]]$x,
         dens[[i]]$y + yshift,
         col = cols[i],
         lwd = 2
       )
-      
     }
-    
     
     legend(
       "topright",
@@ -2648,8 +2750,8 @@ Shiny.setInputValue(
       inset = 0.02
     )
     
-    
   }, width = 700, height = 700)
+  
   
   
  
@@ -2713,8 +2815,6 @@ Shiny.setInputValue(
     
     observeEvent(input$summaryTable,{
       req(input$report)
-      
-      
       
     })
 }
