@@ -8,6 +8,7 @@ library(ggplot2)
 library(dplyr)
 library(tidyr)
 library(shinyjs)
+library(rsconnect)
 
 server <- function(input, output, session){
   parameter_table_rv <- reactiveVal(NULL)
@@ -21,7 +22,7 @@ server <- function(input, output, session){
   roots <- c(
     Home = normalizePath("/mnt/md0/R_D")
   )
-  current_dir <- reactiveVal("/")
+  current_dir <- reactiveVal("/") 
   last_selected_dir <- reactiveVal("/")
   
   # ==================================================
@@ -34,9 +35,8 @@ server <- function(input, output, session){
     roots=roots
   )
 
-  
   output$raw_path <- renderText({
-    
+  
     req(input$raw_dir)
     
     path <- parseDirPath(
@@ -2335,6 +2335,167 @@ Shiny.setInputValue(
   })
   
   
+ 
+  # ==================================================
+  # SELECTION DES DEUX MARQUEURS
+  # ==================================================
+  
+  output$density_axes <- renderUI({
+    
+    req(input$viz_fcs)
+    req(dir.exists(viz_dir()))
+    
+    f <- file.path(viz_dir(), input$viz_fcs)
+    
+    validate(
+      need(file.exists(f), "Merged FCS file not found.")
+    )
+    
+    fcs <- flowCore::read.FCS(
+      f,
+      transformation = FALSE,
+      truncate_max_range = FALSE
+    )
+    
+    params <- colnames(flowCore::exprs(fcs))
+    
+    validate(
+      need(length(params) >= 2, "At least two channels are required.")
+    )
+    
+    names(params) <- NULL
+    
+    tagList(
+      selectInput(
+        "marker_x",
+        "Marker X",
+        choices = params,
+        selected = params[1]
+      ),
+      
+      selectInput(
+        "marker_y",
+        "Marker Y",
+        choices = params,
+        selected = params[2]
+      )
+    )
+  })
+  
+  
+  # ==================================================
+  # PLOT DENSITY FLOWDENSITY
+  # ==================================================
+  
+  output$plot_dens <- renderPlot({
+    
+    req(
+      input$viz_fcs,
+      input$marker_x,
+      input$marker_y
+    )
+    
+    validate(
+      need(
+        input$marker_x != input$marker_y,
+        "Please select two different markers."
+      )
+    )
+    
+    f <- file.path(viz_dir(), input$viz_fcs)
+    
+    validate(
+      need(file.exists(f), "Merged FCS file not found.")
+    )
+    
+    # Read merged FCS
+    fcs <- flowCore::read.FCS(
+      f,
+      transformation = FALSE,
+      truncate_max_range = FALSE
+    )
+    
+    channels <- c(input$marker_x, input$marker_y)
+    
+    validate(
+      need(
+        all(channels %in% colnames(flowCore::exprs(fcs))),
+        "One or both selected markers are missing."
+      )
+    )
+    
+    dat <- flowCore::exprs(fcs)[, channels, drop = FALSE]
+    
+    valid <- apply(
+      dat,
+      1,
+      function(z) all(is.finite(z))
+    )
+    
+    validate(
+      need(sum(valid) >= 20, "Not enough valid events to plot.")
+    )
+ 
+    fcs_plot <- fcs[valid, ]
+ 
+    
+    # ==========================================
+    # ARCSINH TRANSFORMATION
+    # ==========================================
+    
+    cofactor <- input$arcsinh_cofactor
+    
+    validate(
+      need(
+        is.finite(cofactor) && cofactor > 0,
+        "The arcsinh cofactor must be a positive number."
+      )
+    )
+    
+    if (isTRUE(input$apply_arcsinh)) {
+      
+      expr <- flowCore::exprs(fcs_plot)
+      
+      expr[, channels] <- asinh(
+        expr[, channels, drop = FALSE] / cofactor
+      )
+      
+      flowCore::exprs(fcs_plot) <- expr
+    }
+    flowDensity::plotDens(
+      fcs_plot,
+      channels = channels,
+      main = paste(
+        input$marker_x,
+        "vs",
+        input$marker_y
+      ),
+      xlim = if (isTRUE(input$apply_arcsinh)) {
+        asinh(c(input$xlim_min, input$xlim_max) / cofactor)
+      } else {
+        c(input$xlim_min, input$xlim_max)
+      },
+      
+      ylim = if (isTRUE(input$apply_arcsinh)) {
+        asinh(c(input$ylim_min, input$ylim_max) / cofactor)
+      } else {
+        c(input$ylim_min, input$ylim_max)
+      },
+      xlab = input$marker_x,
+      ylab = input$marker_y,
+      pch = ".",
+      cex = 0.7,
+      show.contour = isTRUE(input$show_contour),
+      density.overlay = if (isTRUE(input$density_overlay)) {
+        c(TRUE, TRUE)
+      } else {
+        c(FALSE, FALSE)
+      },
+      verbose = FALSE
+    )
+    
+  }, res = 110)
+  
   
   output$overlay_hist <- renderPlot({
     
@@ -2343,7 +2504,7 @@ Shiny.setInputValue(
       input$viz_markers
     )
     
-    
+  
     f <- file.path(
       viz_dir(),
       input$viz_fcs
@@ -2557,9 +2718,6 @@ Shiny.setInputValue(
       
     })
 }
-
-
-
 
 
 

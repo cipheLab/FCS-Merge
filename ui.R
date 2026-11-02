@@ -464,63 +464,132 @@ Shiny.addCustomMessageHandler(
   ),
 
   
+ 
+  
+  
   ##########################################################
   # TAB 4 : Visualization
   ##########################################################
   
-  
   tabPanel(
-    
     title = "Visualization",
     icon = icon("chart-line"),
     
-    
     fluidRow(
-      
-      
-      # File and parameter selection panel
-      box(
-        
+      column(
         width = 4,
         
-        title = "Merged FCS file",
-        status = "primary",
-        solidHeader = TRUE,
-        # Report output (appears after merge completion)
-        uiOutput("merge_report_ui"),
-
-        selectInput(
-          "viz_fcs",
-          "Choose merged FCS",
-          choices = NULL
-        ),
-        uiOutput("transformation"),
-
-        uiOutput(
-          "viz_parameters"
+        box(
+          width = 12,
+          title = "Merged FCS file",
+          status = "primary",
+          solidHeader = TRUE,
+          
+          uiOutput("merge_report_ui"),
+          
+          selectInput(
+            "viz_fcs",
+            "Choose merged FCS",
+            choices = NULL
+          ),
+          
+          uiOutput("viz_parameters")
         )
-
       ),
       
-      
-      # Plot panel
-      box(
-        
+      column(
         width = 8,
+        box(
+          width = 12,
+          title = "2D density plot — flowDensity",
+          status = "info",
+          solidHeader = TRUE,
+          checkboxInput(
+            "apply_arcsinh",
+            "Apply arcsinh transformation",
+            value = FALSE
+          ),
+          
+          numericInput(
+            "arcsinh_cofactor",
+            "Arcsinh cofactor",
+            value = 150,
+            min = 0.001,
+            step = 1
+          ),
+          
+          uiOutput("density_axes"),
+          fluidRow(
+            column(
+              3,
+              numericInput(
+                "xlim_min",
+                "X-axis minimum",
+                value = 0
+              )
+            ),
+            column(
+              3,
+              numericInput(
+                "xlim_max",
+                "X-axis maximum",
+                value = 100000
+              )
+            ),
+            column(
+              3,
+              numericInput(
+                "ylim_min",
+                "Y-axis minimum",
+                value = 0
+              )
+            ),
+            column(
+              3,
+              numericInput(
+                "ylim_max",
+                "Y-axis maximum",
+                value = 100000
+              )
+            )
+          ),
+          
+          checkboxInput(
+            "show_contour",
+            "Show density contours",
+            value = FALSE
+          ),
+          
+          checkboxInput(
+            "density_overlay",
+            "Show marginal density curves",
+            value = FALSE
+          ),
+          
+          plotOutput(
+            "plot_dens",
+            width = "600px",
+            height = "600px",
+          )
+        ),
         
-        title = "Overlay histogram",
-        status = "info",
-        solidHeader = TRUE,
-        DTOutput("summaryTable"),
-        plotOutput(
-          "overlay_hist",
-          height = "500px"
+        box(
+          width = 12,
+          title = "Overlay histogram",
+          status = "info",
+          solidHeader = TRUE,
+          
+          DTOutput("summaryTable"),
+          
+          plotOutput(
+            "overlay_hist",
+            height = "500px",
+            
+          )
         )
-        
       )
-      
     )
-    
   )
+  
 
 )
