@@ -416,9 +416,7 @@ Shiny.addCustomMessageHandler(
           br(),
           
           
-          uiOutput(
-            "methods_ui"
-          )
+          uiOutput("methods_container")
           
         )
         
@@ -484,141 +482,269 @@ Shiny.addCustomMessageHandler(
   ##########################################################
   # TAB 4 : Visualization
   ##########################################################
-  
+
   tabPanel(
     title = "Visualization",
     icon = icon("chart-line"),
-    fluidRow(
-      column(
-        width=6,
-        
-        box(
-          width = 12,
-          title="Settings",
-          status="primary",
-          solidHeader=TRUE,
-          
-      
-          selectInput(
-            "viz_fcs",
-            "Choose merged FCS",
-            choices = NULL
-          ), 
-          checkboxInput(
-            "apply_arcsinh",
-            "Apply arcsinh transformation",
-            value = FALSE
-          ),
-          numericInput(
-            "arcsinh_cofactor",
-            "Arcsinh cofactor",
-            value = 150,
-            min = 0.001,
-            step = 1
-          ),
+    
+    # CSS personnalisé
+    tags$head(
+      tags$style(HTML("
+      .viz-header {
+        padding: 22px 26px;
+        margin-bottom: 22px;
+        background: linear-gradient(120deg, #17365D, #2874A6);
+        color: white;
+        border-radius: 12px;
+        box-shadow: 0 3px 12px rgba(0,0,0,0.10);
+      }
 
-          br(),
-          
-          downloadButton(
-            "download_fcs",
-            "Download merged FCS files",
-            icon = icon("download"),
-            class = "btn-success"
-          ),
-          
-        )
+     .viz-header h3 {
+  margin-top: 0;
+  font-weight: 600;
+  color: white;
+}
 
-        
-      )
-      
+      .viz-box {
+        border-radius: 10px !important;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.07);
+        border: 1px solid #e8edf2;
+      }
+
+      .viz-box .box-header {
+        border-radius: 10px 10px 0 0;
+        padding: 13px 16px;
+      }
+
+      .viz-box .box-title {
+        font-weight: 600;
+      }
+
+      .viz-box .box-body {
+        padding: 20px;
+      }
+
+      .viz-section-title {
+        color: #34495e;
+        font-weight: 600;
+        font-size: 14px;
+        margin: 12px 0 15px 0;
+      }
+
+      .viz-download {
+        width: 100%;
+        margin-top: 10px;
+        padding: 10px;
+        font-weight: 600;
+        border-radius: 7px;
+      }
+
+      .viz-plot {
+        background: #ffffff;
+        border-radius: 8px;
+        padding: 8px;
+      }
+
+      .viz-help {
+        color: #8492a6;
+        font-size: 12px;
+        margin-top: -5px;
+        margin-bottom: 12px;
+      }
+
+      .viz-box .form-group {
+        margin-bottom: 16px;
+      }
+    "))
     ),
-    fluidRow(
-      column(
-        width = 6,
-        
-        box(
-          width = 12,
-          title = "Histogram",
-          status = "primary",
-          solidHeader = TRUE,
-          
-   
+    
+    fluidPage(
       
-          uiOutput("viz_parameters"),
-          plotOutput(
-            "overlay_hist",
-            height = "600px",
-            width="600px"
-
+      # En-tête
+      fluidRow(
+        column(
+          width = 12,
+          div(
+            class = "viz-header",
+            h3(icon("chart-line"), " FCS Data Visualization"),
           )
-        ),
-       
+        )
       ),
       
-      column(
-        width = 6,
-        box(
+      # Settings
+      fluidRow(
+        column(
           width = 12,
-          title = "2D density plot",
-          status = "info",
-          solidHeader = TRUE,
-   
-         
-          
-          uiOutput("density_axes"),
-          fluidRow(
-            column(
-              3,
-              numericInput(
-                "xlim_min",
-                "X-axis minimum",
-                value = 0
-              )
-            ),
-            column(
-              3,
-              numericInput(
-                "xlim_max",
-                "X-axis maximum",
-                value = 100000
-              )
-            ),
-            column(
-              3,
-              numericInput(
-                "ylim_min",
-                "Y-axis minimum",
-                value =0
-              )
-            ),
-            column(
-              3,
-              numericInput(
-                "ylim_max",
-                "Y-axis maximum",
-                value = 100000
+          box(
+            width = 12,
+            title = tagList(icon("sliders-h"), " Visualization settings"),
+            status = "primary",
+            solidHeader = TRUE,
+            collapsible = TRUE,
+            class = "viz-box",
+            
+            fluidRow(
+              column(
+                width = 5,
+                selectInput(
+                  "viz_fcs",
+                  "Select merged FCS file",
+                  choices = NULL,
+                  width = "100%"
+                )
+              ),
+              
+              column(
+                width = 3,
+                checkboxInput(
+                  "apply_arcsinh",
+                  "Apply arcsinh transformation",
+                  value = FALSE
+                )
+              ),
+              
+              column(
+                width = 2,
+                numericInput(
+                  "arcsinh_cofactor",
+                  "Arcsinh cofactor",
+                  value = 150,
+                  min = 0.001,
+                  step = 1,
+                  width = "100%"
+                )
+              ),
+              
+              column(
+                width = 2,
+                br(),
+                downloadButton(
+                  "download_fcs",
+                  "Download FCS",
+                  icon = icon("download"),
+                  class = "btn-success viz-download"
+                )
               )
             )
-          ),
-          
-          checkboxInput(
-            "density",
-            "Color by density",
-            value = TRUE
-          ),
-   
-          plotOutput(
-            "plot_dens",
-            width = "800px",
-            height = "800px"
           )
         )
-        
+      ),
       
-
+      # Plots
+      fluidRow(
+        
+        # Histogram
+        column(
+          width = 6,
+          box(
+            width = 12,
+            title = tagList(icon("chart-bar"), " Histogram"),
+            status = "primary",
+            solidHeader = TRUE,
+            class = "viz-box",
+            
+            p(
+              class = "viz-help",
+              "Compare fluorescence intensity distributions across methods."
+            ),
+            
+            uiOutput("viz_parameters"),
+            
+            div(
+              class = "viz-plot",
+              plotOutput(
+                "overlay_hist",
+                height = "500px",
+                width = "100%"
+              )
+            )
+          )
+        ),
+        
+        # Density plot
+        column(
+          width = 6,
+          box(
+            width = 12,
+            title = tagList(icon("braille"), " 2D Density Plot"),
+            status = "info",
+            solidHeader = TRUE,
+            class = "viz-box",
+            
+            p(
+              class = "viz-help",
+              "Explore the relationship between two parameters."
+            ),
+            
+            uiOutput("density_axes"),
+            
+            tags$hr(),
+            
+            h5(
+              class = "viz-section-title",
+              icon("expand-arrows-alt"),
+              " Axis limits"
+            ),
+            
+            fluidRow(
+              column(
+                width = 6,
+                numericInput(
+                  "xlim_min",
+                  "X-axis minimum",
+                  value = 0,
+                  width = "100%"
+                )
+              ),
+              column(
+                width = 6,
+                numericInput(
+                  "xlim_max",
+                  "X-axis maximum",
+                  value = 100000,
+                  width = "100%"
+                )
+              ),
+              column(
+                width = 6,
+                numericInput(
+                  "ylim_min",
+                  "Y-axis minimum",
+                  value = 0,
+                  width = "100%"
+                )
+              ),
+              column(
+                width = 6,
+                numericInput(
+                  "ylim_max",
+                  "Y-axis maximum",
+                  value = 100000,
+                  width = "100%"
+                )
+              )
+            ),
+            
+            checkboxInput(
+              "density",
+              "Color points by density",
+              value = TRUE
+            ),
+            
+            div(
+              class = "viz-plot",
+              plotOutput(
+                "plot_dens",
+                width = "800px",
+                height = "800px"
+              )
+            )
+          )
+        )
       )
     )
   )
+  
   
 
 )

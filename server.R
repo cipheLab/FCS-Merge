@@ -12,7 +12,12 @@ library(rsconnect)
 
 
 server <- function(input, output, session){
-  
+  uploaded_methods <- reactiveVal(data.frame(
+    id = integer(),
+    name = character(),
+    path = character(),
+    stringsAsFactors = FALSE
+  ))
   # "local" : sélection de dossiers avec shinyFiles
   # "upload" : fichiers envoyés au serveur Posit
   app_mode <- Sys.getenv("FCS_MERGE_MODE", "upload")
@@ -132,9 +137,6 @@ server <- function(input, output, session){
     
   }
 
-  
-
-  
   # ==================================================
   # METHODS STORAGE
   # ==================================================
@@ -150,6 +152,8 @@ server <- function(input, output, session){
   get_method_sources <- reactive({
     
     dat <- methods()
+    uploaded <- uploaded_methods()
+    
     sources <- list()
     
     for (i in seq_len(nrow(dat))) {
@@ -163,13 +167,19 @@ server <- function(input, output, session){
         
       } else {
         
-        uploaded <- input[[paste0("method_files_", id)]]
+        files <- uploaded[
+          uploaded$id == id,
+          ,
+          drop = FALSE
+        ]
         
-        if (is.null(uploaded)) {
-          sources[[suffix]] <- character(0)
-        } else {
-          sources[[suffix]] <- uploaded$datapath
-        }
+        files <- files[
+          file.exists(files$path),
+          ,
+          drop = FALSE
+        ]
+        
+        sources[[suffix]] <- files$path
         
       }
       
@@ -352,44 +362,74 @@ server <- function(input, output, session){
     
   })
   
-  
-  
+  observe({
+    dat <- methods()
+    
+    if (nrow(dat) == 0) return()
+    
+    uploaded <- uploaded_methods()
+    
+    for (i in seq_len(nrow(dat))) {
+      
+      id <- dat$id[i]
+      input_id <- paste0("method_file_", id)
+      
+      files <- input[[input_id]]
+      
+      if (!is.null(files) && nrow(files) > 0) {
+        
+        for (j in seq_len(nrow(files))) {
+          
+          idx <- which(
+            uploaded$id == id &
+              uploaded$name == files$name[j]
+          )
+          
+          new_file <- data.frame(
+            id = id,
+            name = files$name[j],
+            path = files$datapath[j],
+            stringsAsFactors = FALSE
+          )
+          
+          if (length(idx) > 0) {
+            uploaded[idx, ] <- new_file
+          } else {
+            uploaded <- rbind(uploaded, new_file)
+          }
+        }
+      }
+    }
+    
+    uploaded_methods(uploaded)
+  })
+
   
   # ==================================================
   # UI METHODS
   # ==================================================
   
-  output$methods_ui <- renderUI({
-    
+  # ==================================================
+  # UI METHODS - INSERTION SANS RECREER LES ANCIENS
+  # ==================================================
+  
+  output$methods_container <- renderUI({
     
     dat <- methods()
     
-    
-    if(nrow(dat)==0){
-      
+    if (nrow(dat) == 0) {
       return(
         tags$div(
-          style="
-          color:grey;
-          font-style:italic;
-          ",
+          style = "color:grey; font-style:italic;",
           "No process added yet"
         )
       )
-      
     }
     
-    
-    lapply(
-      seq_len(nrow(dat)),
-      
-      function(x){
+    tagList(
+      lapply(dat$id, function(id) {
         
-        
-        id <- dat$id[x]
-        
-        suffix <- dat$suffix[x]
-      
+        suffix <- dat$suffix[match(id, dat$id)]
         
         fluidRow(
           
@@ -422,11 +462,17 @@ server <- function(input, output, session){
                 
               } else {
                 
-                fileInput(
-                  paste0("method_files_", id),
-                  "Choose processed FCS files",
-                  multiple = TRUE,
-                  accept = ".fcs"
+                tagList(
+                  fileInput(
+                    paste0("method_file_", id),
+                    "Fichier FCS",
+                    multiple = TRUE,
+                    accept = ".fcs"
+                  ),
+                  
+                  uiOutput(
+                    paste0("method_uploaded_", id)
+                  )
                 )
                 
               }
@@ -437,44 +483,16 @@ server <- function(input, output, session){
             4,
             
             box(
-              width=12,
-              title = tagList(
-                "Suffix ",
-                tags$span(
-                  "?",
-                  title = paste0(
-                    "The suffix will be added to the parameter name in the merged FCS file.\n\n",
-                    "Example: if the original channel is V-V500 and the process suffix is 'cycomb',\n",
-                    "the new merged parameter will be named V-V500_cycomb."
-                  ),
-                  style = "
-        display:inline-block;
-        width:18px;
-        height:18px;
-        border-radius:50%;
-        background:#3b82f6;
-        color:white;
-        text-align:center;
-        line-height:18px;
-        font-weight:bold;
-        cursor:help;
-        margin-left:5px;
-      "
-                )
-              ),
-     
+              width = 12,
+              title = "Suffix",
+              
               textInput(
-                paste0(
-                  "suffix_",
-                  id
-                ),
+                paste0("suffix_", id),
                 NULL,
-                value=suffix
+                value = suffix
               )
             )
-            
           ),
-       
           
           column(
             2,
@@ -482,35 +500,25 @@ server <- function(input, output, session){
             br(),
             
             actionButton(
-              paste0(
-                "delete_",
-                id
-              ),
+              paste0("delete_", id),
               "",
-              icon=icon("trash"),
-              class="btn-danger"
+              icon = icon("trash"),
+              class = "btn-danger"
             )
-            
           )
           
         )
-        
-      }
-      
+      })
     )
-    
-    
   })
-  
   # ==================================================
   # CHECK
   # ==================================================
   
-
   output$validate_button <- renderUI({
     
     ## ==========================
-    ## V??rification RAW
+    ## Verification RAW
     ## ==========================
     
     raw_ok <- length(raw_files()) > 0
@@ -536,11 +544,17 @@ server <- function(input, output, session){
       
     } else {
       
+      uploaded <- uploaded_methods()
+      
       for (id in dat$id) {
         
-        uploaded <- input[[paste0("method_files_", id)]]
+        files <- uploaded[
+          uploaded$id == id,
+          ,
+          drop = FALSE
+        ]
         
-        if (is.null(uploaded) || nrow(uploaded) == 0) {
+        if (nrow(files) == 0) {
           all_ok <- FALSE
           break
         }
@@ -570,11 +584,6 @@ server <- function(input, output, session){
     
   })
  
-  
-  library(flowCore)
-  library(stringdist)
-  
-  
   match_fcs_files <- function(raw_files, method_sources) {
     
     if (length(raw_files) == 0) {
@@ -617,7 +626,7 @@ server <- function(input, output, session){
         ]
         
       }
-      
+    
       matched <- rep(NA_character_, length(raw_files))
       
       # Aucun fichier méthode disponible
@@ -921,6 +930,7 @@ server <- function(input, output, session){
         intersect,
         lapply(param_list, function(x) x$name)
       )
+      
       
       raw_parameters <- param_list$RAW
       
@@ -2160,10 +2170,7 @@ Shiny.setInputValue(
       
     })
     
-
-
-    names(labels) <- params
-    
+  names(labels) <- params
     
     choices <- setNames(
       object = params,
@@ -2177,7 +2184,7 @@ Shiny.setInputValue(
         )
       )
     )
-    
+  
     selectInput(
       "viz_markers",
       "Columns to overlay",
@@ -2441,7 +2448,7 @@ Shiny.setInputValue(
           length(cofactor) == 1 &&
             is.finite(cofactor) &&
             cofactor > 0,
-          "The arcsinh cofactor must be a positive number."
+          "The arcsinh cofact or must be a positive number."
         )
       )
     }
@@ -2675,11 +2682,9 @@ Shiny.setInputValue(
       
       contentType = "application/zip"
     )
-    observeEvent(input$summaryTable,{
-      req(input$report)
-      
-    })
+ 
 }
+
 
 
 
