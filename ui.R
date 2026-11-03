@@ -20,7 +20,7 @@ options(
 )
 
 useShinyjs()
-
+app_mode <- Sys.getenv("FCS_MERGE_MODE", "upload")
 ############################################################
 # User Interface
 ############################################################
@@ -236,8 +236,7 @@ Shiny.addCustomMessageHandler(
       cursor:pointer;
     }
     
-    
-    0
+  
     /* ===========================
        TEXT STYLE
     =========================== */
@@ -338,33 +337,48 @@ Shiny.addCustomMessageHandler(
     fluidRow(
       
       column(
-        
         12,
         
         box(
-          
           width = 12,
-          
-          title = "Raw FCS folder",
+          title = "Raw FCS files",
           status = "primary",
           solidHeader = TRUE,
           
-          
-          shinyDirButton(
-            "raw_dir",
-            "Choose RAW folder",
-            "Select",
-            class = "btn-raw"
-          ),
-          
-          
-          br(),
-          br(),
-          
-          
-          verbatimTextOutput(
-            "raw_path"
-          )
+          if (identical(app_mode, "local")) {
+            
+            tagList(
+              
+              shinyDirButton(
+                "raw_dir",
+                "Choose RAW folder",
+                "Select",
+                class = "btn-raw"
+              ),
+              
+              br(),
+              br(),
+              
+              verbatimTextOutput("raw_path")
+              
+            )
+            
+          } else {
+            
+            tagList(
+              
+              fileInput(
+                "raw_files",
+                "Choose RAW FCS files",
+                multiple = TRUE,
+                accept = ".fcs"
+              ),
+              
+              verbatimTextOutput("raw_path")
+              
+            )
+            
+          }
           
         )
         
@@ -476,39 +490,25 @@ Shiny.addCustomMessageHandler(
     icon = icon("chart-line"),
     fluidRow(
       column(
-        width = 4,
+        width=6,
         
         box(
           width = 12,
-          title = "Merged FCS file",
-          status = "primary",
-          solidHeader = TRUE,
+          title="Settings",
+          status="primary",
+          solidHeader=TRUE,
           
-          uiOutput("merge_report_ui"),
-          
+      
           selectInput(
             "viz_fcs",
             "Choose merged FCS",
             choices = NULL
-          ),
-          
-          uiOutput("viz_parameters")
-        )
-      ),
-      
-      column(
-        width = 8,
-        box(
-          width = 12,
-          title = "2D density plot — flowDensity",
-          status = "info",
-          solidHeader = TRUE,
+          ), 
           checkboxInput(
             "apply_arcsinh",
             "Apply arcsinh transformation",
             value = FALSE
           ),
-          
           numericInput(
             "arcsinh_cofactor",
             "Arcsinh cofactor",
@@ -516,6 +516,54 @@ Shiny.addCustomMessageHandler(
             min = 0.001,
             step = 1
           ),
+
+          br(),
+          
+          downloadButton(
+            "download_fcs",
+            "Download merged FCS files",
+            icon = icon("download"),
+            class = "btn-success"
+          ),
+          
+        )
+
+        
+      )
+      
+    ),
+    fluidRow(
+      column(
+        width = 6,
+        
+        box(
+          width = 12,
+          title = "Histogram",
+          status = "primary",
+          solidHeader = TRUE,
+          
+   
+      
+          uiOutput("viz_parameters"),
+          plotOutput(
+            "overlay_hist",
+            height = "600px",
+            width="600px"
+
+          )
+        ),
+       
+      ),
+      
+      column(
+        width = 6,
+        box(
+          width = 12,
+          title = "2D density plot",
+          status = "info",
+          solidHeader = TRUE,
+   
+         
           
           uiOutput("density_axes"),
           fluidRow(
@@ -562,26 +610,12 @@ Shiny.addCustomMessageHandler(
           plotOutput(
             "plot_dens",
             width = "800px",
-            height = "800px",
-          )
-        ),
-        
-        box(
-          width = 12,
-          title = "Overlay histogram",
-          status = "info",
-          solidHeader = TRUE,
-          
-          DTOutput("summaryTable"),
-          
-          plotOutput(
-            "overlay_hist",
-            height = "600px",
-            width="600px"
-            
-            
+            height = "800px"
           )
         )
+        
+      
+
       )
     )
   )

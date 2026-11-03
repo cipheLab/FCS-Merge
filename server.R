@@ -11,8 +11,12 @@ library(shinyjs)
 library(rsconnect)
 
 
-
 server <- function(input, output, session){
+  
+  # "local" : sélection de dossiers avec shinyFiles
+  # "upload" : fichiers envoyés au serveur Posit
+  app_mode <- Sys.getenv("FCS_MERGE_MODE", "upload")
+  
   parameter_table_rv <- reactiveVal(NULL)
   merge_summary <- reactiveVal(NULL)
   
@@ -21,66 +25,113 @@ server <- function(input, output, session){
   parameters_validated <- reactiveVal(FALSE)
   merge_finished <- reactiveVal(FALSE)
   matching_validated <- reactiveVal(FALSE)
-  roots <- c(
-    Home = normalizePath("/mnt/md0/R_D")
+  
+  raw_files_rv <- reactiveVal(character())
+  # ==================================================
+  # CROSS-PLATFORM PATHS
+  # ==================================================
+  
+  home_dir <- normalizePath(
+    path.expand("~"),
+    winslash = "/",
+    mustWork = TRUE
   )
-  current_dir <- reactiveVal("/") 
-  last_selected_dir <- reactiveVal("/")
   
+  app_dir <- normalizePath(
+    getwd(),
+    winslash = "/",
+    mustWork = TRUE
+  )
   
-  get_transformed_fcs <- function(fcs, channels) {
+  roots <- c(
+    Home = home_dir,
+    App = app_dir
+  )
+  
+  normalize_dir <- function(path) {
     
-    fcs_plot <- fcs
-    
-    if (isTRUE(input$apply_arcsinh)) {
-      
-      cofactor <- input$arcsinh_cofactor
-      
-      validate(
-        need(
-          length(cofactor) == 1 &&
-            is.finite(cofactor) &&
-            cofactor > 0,
-          "The arcsinh cofactor must be a positive number."
-        )
-      )
-      
-      expr <- flowCore::exprs(fcs_plot)
-      
-      expr[, channels] <- asinh(
-        expr[, channels, drop = FALSE] / cofactor
-      )
-      
-      flowCore::exprs(fcs_plot) <- expr
+    if (
+      is.null(path) ||
+      length(path) == 0 ||
+      is.na(path[1]) ||
+      !nzchar(path[1])
+    ) {
+      return(NA_character_)
     }
     
-    return(fcs_plot)
+    normalizePath(
+      path[1],
+      winslash = "/",
+      mustWork = FALSE
+    )
   }
   
   # ==================================================
-  # RAW
+  # RAW FILES
   # ==================================================
-
-  shinyDirChoose(
-    input,
-    "raw_dir",
-    roots=roots
-  )
-
-  output$raw_path <- renderText({
   
-    req(input$raw_dir)
+  if (identical(app_mode, "local")) {
     
-    path <- parseDirPath(
-      roots,
-      input$raw_dir
+    shinyDirChoose(
+      input,
+      "raw_dir",
+      roots = roots
     )
-    current_dir(dirname(path))
-    last_selected_dir(dirname(path))
     
-    path
+    raw_path <- reactive({
+      
+      req(input$raw_dir)
+      
+      normalize_dir(
+        parseDirPath(roots, input$raw_dir)
+      )
+      
+    })
     
-  })
+    raw_files <- reactive({
+      
+      req(raw_path())
+      
+      list.files(
+        raw_path(),
+        pattern = "\\.fcs$",
+        full.names = TRUE,
+        ignore.case = TRUE
+      )
+      
+    })
+    
+    output$raw_path <- renderText({
+      raw_path()
+    })
+    
+  } else {
+    
+    raw_path <- reactive(NULL)
+    
+    raw_files <- reactive({
+      
+      req(input$raw_files)
+      
+      files <- input$raw_files
+      
+      files$datapath
+      
+    })
+    
+    output$raw_path <- renderText({
+      
+      req(input$raw_files)
+      
+      paste(
+        nrow(input$raw_files),
+        "RAW FCS files uploaded"
+      )
+      
+    })
+    
+  }
+
   
 
   
@@ -96,7 +147,37 @@ server <- function(input, output, session){
       stringsAsFactors = FALSE
     )
   )
-  
+  get_method_sources <- reactive({
+    
+    dat <- methods()
+    sources <- list()
+    
+    for (i in seq_len(nrow(dat))) {
+      
+      id <- dat$id[i]
+      suffix <- dat$suffix[i]
+      
+      if (identical(app_mode, "local")) {
+        
+        sources[[suffix]] <- dat$path[i]
+        
+      } else {
+        
+        uploaded <- input[[paste0("method_files_", id)]]
+        
+        if (is.null(uploaded)) {
+          sources[[suffix]] <- character(0)
+        } else {
+          sources[[suffix]] <- uploaded$datapath
+        }
+        
+      }
+      
+    }
+    
+    sources
+    
+  })
   
   next_id <- reactiveVal(1)
   
@@ -143,52 +224,58 @@ server <- function(input, output, session){
       methods(dat)
       
     
-      shinyDirChoose(
-        input,
-        paste0("method_dir_", id),
-        roots = roots
-      )
-      
-      observeEvent(
-        input[[paste0("method_dir_", id)]],
-        {
-          
-          folder_input <- input[[paste0("method_dir_", id)]]
-          
-          if(is.null(folder_input) ||
-             length(folder_input) == 0){
-            return()
-          }
-          
-          
-          path <- parseDirPath(
-            roots,
-            folder_input
-          )
-          
-          
-          if(length(path) == 0 ||
-             is.na(path) ||
-             !nzchar(path)){
-            return()
-          }
-          
+      if (identical(app_mode, "local")) {
+        
+        shinyDirChoose(
+          input,
+          paste0("method_dir_", id),
+          roots = roots
+        )
+        
+        observeEvent(
+          input[[paste0("method_dir_", id)]],
+          {
+            
+            folder_input <- input[[paste0("method_dir_", id)]]
+            
+            if (is.null(folder_input)) {
+              return()
+            }
+            
+            path <- normalize_dir(
+              parseDirPath(roots, folder_input)
+            )
+            
+            if (is.na(path)) {
+              return()
+            }
+            
+            dat <- methods()
+            idx <- match(id, dat$id)
+            
+            if (!is.na(idx)) {
+              dat$path[idx] <- path
+              methods(dat)
+            }
+            
+          },
+          ignoreInit = TRUE
+        )
+        
+        output[[paste0("method_path_", id)]] <- renderText({
           
           dat <- methods()
-          
           idx <- match(id, dat$id)
           
-          if(!is.na(idx)){
-            
-            dat$path[idx] <- path
-            
-            methods(dat)
-            
+          if (is.na(idx) || !nzchar(dat$path[idx])) {
+            return("No folder selected")
           }
           
-        },
-        ignoreInit = TRUE
-      )
+          dat$path[idx]
+          
+        })
+        
+      }
       
       
    
@@ -310,36 +397,40 @@ server <- function(input, output, session){
             5,
             
             box(
-              width=12,
-              title=paste(
-                "Process",
-                id
-              ),
-              status="info",
-              solidHeader=TRUE,
+              width = 12,
+              title = paste("Process", id),
+              status = "info",
+              solidHeader = TRUE,
               
-              shinyDirButton(
-                paste0(
-                  "method_dir_",
-                  id
-                ),
-                "Choose FCS folder",
-                "Select",
-                class = "btn-raw"
-              ),
-              
-              br(),
-              br(),
-              
-              verbatimTextOutput(
-                paste0(
-                  "method_path_",
-                  id
+              if (identical(app_mode, "local")) {
+                
+                tagList(
+                  shinyDirButton(
+                    paste0("method_dir_", id),
+                    "Choose FCS folder",
+                    "Select",
+                    class = "btn-raw"
+                  ),
+                  
+                  br(),
+                  br(),
+                  
+                  verbatimTextOutput(
+                    paste0("method_path_", id)
+                  )
                 )
-              )
-              
+                
+              } else {
+                
+                fileInput(
+                  paste0("method_files_", id),
+                  "Choose processed FCS files",
+                  multiple = TRUE,
+                  accept = ".fcs"
+                )
+                
+              }
             )
-            
           ),
           
           column(
@@ -415,47 +506,14 @@ server <- function(input, output, session){
   # CHECK
   # ==================================================
   
-  observeEvent(
-    input$check_files,
-    {
-      
-      print(methods())
-      
-      showNotification(
-        paste(
-          nrow(methods()),
-          "methods detected"
-        ),
-        type="message"
-      )
-      
-    }
-  )
+
   output$validate_button <- renderUI({
     
     ## ==========================
     ## V??rification RAW
     ## ==========================
     
-    raw_ok <- FALSE
-    
-    if (!is.null(input$raw_dir) &&
-        length(input$raw_dir) > 0) {
-      
-      raw_path <- parseDirPath(
-        roots,
-        input$raw_dir
-      )
-      
-      if (length(raw_path) > 0 &&
-          !is.na(raw_path) &&
-          nzchar(raw_path)) {
-        
-        raw_ok <- TRUE
-        
-      }
-      
-    }
+    raw_ok <- length(raw_files()) > 0
     
     ## ==========================
     ## V??rification m??thodes
@@ -463,28 +521,29 @@ server <- function(input, output, session){
     
     dat <- methods()
     
-    
     if (!raw_ok || nrow(dat) == 0) {
       return(NULL)
     }
     
-    
     all_ok <- TRUE
     
-    
-    for (i in seq_len(nrow(dat))) {
+    if (identical(app_mode, "local")) {
       
+      all_ok <- all(
+        !is.na(dat$path) &
+          nzchar(dat$path)
+      )
       
-      method_path <- dat$path[i]
+    } else {
       
-      
-      if (is.null(method_path) ||
-          length(method_path) == 0 ||
-          is.na(method_path) ||
-          !nzchar(method_path)) {
+      for (id in dat$id) {
         
-        all_ok <- FALSE
-        break
+        uploaded <- input[[paste0("method_files_", id)]]
+        
+        if (is.null(uploaded) || nrow(uploaded) == 0) {
+          all_ok <- FALSE
+          break
+        }
         
       }
       
@@ -516,136 +575,126 @@ server <- function(input, output, session){
   library(stringdist)
   
   
-  match_fcs_files <- function(raw_dir, method_dirs){
+  match_fcs_files <- function(raw_files, method_sources) {
     
-    raw_files <- list.files(
-      raw_dir,
-      pattern="\\.fcs$",
-      full.names=TRUE,
-      ignore.case=TRUE
-    )
-    
-    
-    if(length(raw_files)==0){
-      stop("No RAW FCS files found")
+    if (length(raw_files) == 0) {
+      stop("No RAW FCS files found.")
     }
     
+    raw_files <- raw_files[file.exists(raw_files)]
+    
+    if (length(raw_files) == 0) {
+      stop("No valid RAW FCS files found.")
+    }
     
     results <- data.frame(
       raw_file = raw_files,
       stringsAsFactors = FALSE
     )
     
-    for(method_name in names(method_dirs)){
+    for (method_name in names(method_sources)) {
       
-      method_files <- list.files(
-        method_dirs[[method_name]],
-        pattern="\\.fcs$",
-        full.names=TRUE,
-        ignore.case=TRUE
+      source <- method_sources[[method_name]]
+      
+      # Une source peut être un dossier ou une liste de fichiers
+      if (length(source) == 1 && dir.exists(source)) {
+        
+        method_files <- list.files(
+          source,
+          pattern = "\\.fcs$",
+          full.names = TRUE,
+          ignore.case = TRUE
+        )
+        
+      } else {
+        
+        method_files <- source[
+          file.exists(source)
+        ]
+        
+        method_files <- method_files[
+          grepl("\\.fcs$", method_files, ignore.case = TRUE)
+        ]
+        
+      }
+      
+      matched <- rep(NA_character_, length(raw_files))
+      
+      # Aucun fichier méthode disponible
+      if (length(method_files) == 0) {
+        results[[method_name]] <- matched
+        next
+      }
+      
+      method_names <- tools::file_path_sans_ext(
+        basename(method_files)
       )
       
-      
-      matched <- character(length(raw_files))
-      
-      
-      for(i in seq_along(raw_files)){
-        
+      for (i in seq_along(raw_files)) {
         
         raw_name <- tools::file_path_sans_ext(
           basename(raw_files[i])
         )
         
-        
-        method_names <- tools::file_path_sans_ext(
-          basename(method_files)
-        )
-        
-        
-        # =========================
-        # 1) Matching par nom
-        # =========================
-        
-        scores <- stringdist(
+        scores <- stringdist::stringdist(
           raw_name,
           method_names,
-          method="jw"
+          method = "jw"
         )
-        
         
         best <- which.min(scores)
         
-        if(length(method_files)==0){
-          matched[i] <- NA
-          next
-        }
-        
-        # seuil de confiance
-        if(length(best)>0 && scores[best] < 0.25){
+        if (
+          length(best) > 0 &&
+          is.finite(scores[best]) &&
+          scores[best] < 0.25
+        ) {
           
           matched[i] <- method_files[best]
           
         } else {
           
-          
-          # =========================
-          # 2) Matching cellule
-          # =========================
-          
-          
           raw_fcs <- tryCatch(
-            read.FCS(
+            flowCore::read.FCS(
               raw_files[i],
-              transformation=FALSE,
-              truncate_max_range=FALSE
+              transformation = FALSE,
+              truncate_max_range = FALSE
             ),
-            error=function(e) NULL
+            error = function(e) NULL
           )
           
-          
-          if(!is.null(raw_fcs)){
+          if (!is.null(raw_fcs)) {
             
+            raw_cells <- nrow(flowCore::exprs(raw_fcs))
             
-            raw_cells <- nrow(exprs(raw_fcs))
-            
-            
-            cell_diff <- sapply(
+            cell_diff <- vapply(
               method_files,
-              function(f){
+              function(f) {
                 
                 fcs <- tryCatch(
-                  read.FCS(
+                  flowCore::read.FCS(
                     f,
-                    transformation=FALSE,
-                    truncate_max_range=FALSE
+                    transformation = FALSE,
+                    truncate_max_range = FALSE
                   ),
-                  error=function(e) NULL
+                  error = function(e) NULL
                 )
                 
-                
-                if(is.null(fcs)){
+                if (is.null(fcs)) {
                   return(Inf)
                 }
                 
-                
                 abs(
-                  nrow(exprs(fcs))-raw_cells
+                  nrow(flowCore::exprs(fcs)) - raw_cells
                 )
                 
-              }
+              },
+              numeric(1)
             )
             
-            
-            if(length(cell_diff)>0 && min(cell_diff) < Inf){
-              
+            if (any(is.finite(cell_diff))) {
               matched[i] <- method_files[which.min(cell_diff)]
-              
-            } else {
-              
-              matched[i] <- NA
-              
             }
-            
             
           }
           
@@ -653,71 +702,13 @@ server <- function(input, output, session){
         
       }
       
-      
       results[[method_name]] <- matched
       
     }
     
-    
     results
-    
   }
-  
-  observeEvent(
-    input$check_files,
-    {
-      
-      raw_path <- parseDirPath(
-        roots,
-        input$raw_dir
-      )
-      
-      method_paths <- list()
-      
-      dat <- methods()
-      
-      # Récupérer les suffixes saisis sans actualiser
-      # l'interface à chaque caractère
-      for (i in dat$id) {
-        
-        value <- input[[paste0("suffix_", i)]]
-        
-        if (!is.null(value)) {
-          dat$suffix[dat$id == i] <- value
-        }
-      }
-      
-      # Mettre à jour les suffixes dans le tableau réactif
-      methods(dat)
-      
-      # Construire les chemins avec les suffixes à jour
-      for (i in dat$id) {
-        
-        method_paths[[dat$suffix[dat$id == i]]] <-
-          dat$path[dat$id == i]
-        
-      }
-      
-      matching <- match_fcs_files(
-        raw_path,
-        method_paths
-      )
-      
-      matching_rv(matching)
-      matching_validated(TRUE)
-      
-      # Affichage uniquement des noms de fichiers
-      matching_display <- matching
-      
-      for (col in names(matching_display)) {
-        matching_display[[col]] <- basename(
-          matching_display[[col]]
-        )
-      }
-      
-    }
-  )
-  
+
   output$validate_parameters_button <- renderUI({
     
     
@@ -830,19 +821,24 @@ server <- function(input, output, session){
     )
     
   })
-  get_fcs_parameters <- function(file){
+  get_fcs_parameters <- function(file) {
     
-    if(length(file)==0 || is.na(file) || !file.exists(file)){
+    if (
+      is.null(file) ||
+      length(file) != 1 ||
+      is.na(file) ||
+      !file.exists(file)
+    ) {
       return(
         data.frame(
-          name=character(),
-          desc=character(),
-          stringsAsFactors=FALSE
+          name = character(),
+          desc = character(),
+          stringsAsFactors = FALSE
         )
       )
     }
     
-    fcs <- read.FCS(
+    fcs <- flowCore::read.FCS(
       file,
       transformation = FALSE,
       truncate_max_range = FALSE
@@ -855,290 +851,126 @@ server <- function(input, output, session){
       desc = data$desc,
       stringsAsFactors = FALSE
     )
-    
   }
-  observeEvent(
-    input$check_files,
-    {
+  observeEvent(input$check_files, {
+    
+    tryCatch({
       
-      raw_path <- parseDirPath(
-        roots,
-        input$raw_dir
-      )
-      
-      
-      method_paths <- list()
-      
+      raw_file_list <- raw_files()
       dat <- methods()
       
+      req(length(raw_file_list) > 0)
+      req(nrow(dat) > 0)
       
-      for(i in dat$id){
+      # Récupérer les suffixes saisis
+      for (i in dat$id) {
+        value <- input[[paste0("suffix_", i)]]
         
-        method_paths[[dat$suffix[i]]] <-
-          dat$path[i]
-        
+        if (!is.null(value)) {
+          dat$suffix[dat$id == i] <- value
+        }
       }
       
+      # Vérifier que les suffixes sont renseignés et uniques
+      validate(
+        need(
+          all(nzchar(trimws(dat$suffix))),
+          "Every process must have a suffix."
+        ),
+        need(
+          !anyDuplicated(dat$suffix),
+          "Each process must have a unique suffix."
+        )
+      )
       
+      methods(dat)
+      
+      # Récupérer les fichiers ou dossiers des méthodes
+      method_paths <- get_method_sources()
+      
+      # Mettre les suffixes à jour comme noms de liste
+      names(method_paths) <- dat$suffix
+      
+      # Faire correspondre les fichiers RAW et méthode
       matching <- match_fcs_files(
-        raw_path,
+        raw_file_list,
         method_paths
       )
       
+      matching_rv(matching)
+      matching_validated(TRUE)
       
-      # ===============================
-      # Choisir un RAW au hasard
-      # ===============================
-      
-      raw_file <- sample(
-        matching$raw_file,
-        1
-      )
-      
-      
-      # param??tres RAW
+      # Choisir un fichier RAW pour identifier les paramètres
+      raw_file <- matching$raw_file[1]
       
       param_list <- list()
-  
-      param_list$RAW <- get_fcs_parameters(
-        raw_file
-      )
+      param_list$RAW <- get_fcs_parameters(raw_file)
       
-      
-      # ===============================
-      # Param??tres m??thodes
-      # ===============================
-      
-      for(col in names(matching)[-1]){
+      # Récupérer les paramètres des fichiers méthode correspondants
+      for (col in names(matching)[-1]) {
         
-        method_file <- matching[
-          matching$raw_file == raw_file,
-          col
+        method_file <- matching[[col]][
+          match(raw_file, matching$raw_file)
         ]
-        print(method_file)
-        param_list[[col]] <- get_fcs_parameters(
-          method_file
-        )
         
+        param_list[[col]] <- get_fcs_parameters(method_file)
       }
       
-      # ===============================
-      # garder uniquement les names communs
-      # RAW + toutes les m??thodes
-      # ===============================
-      
+      # Garder les paramètres communs à tous les fichiers
       common_names <- Reduce(
         intersect,
-        lapply(
-          param_list,
-          function(x)
-            x$name
-        )
+        lapply(param_list, function(x) x$name)
       )
-      
-      
-      # ===============================
-      # construction table
-      # avec desc RAW
-      # ===============================
       
       raw_parameters <- param_list$RAW
       
-      
       parameter_table <- data.frame(
-        
         name = common_names,
-        
         desc = raw_parameters$desc[
-          match(
-            common_names,
-            raw_parameters$name
-          )
+          match(common_names, raw_parameters$name)
         ],
-        
         stringsAsFactors = FALSE
-        
       )
       
-      
-      parameter_table_rv(parameter_table)
-      merge_summary(NULL)
-      
-      for(n in names(param_list)){
+      # Ajouter les descriptions des méthodes
+      for (n in names(param_list)) {
         
         tmp <- param_list[[n]]
         
-        parameter_table[[paste0(
-          "desc_",
-          n
-        )]] <-
-          tmp$desc[
-            match(
-              common_names,
-              tmp$name
-            )
-          ]
-        
+        parameter_table[[paste0("desc_", n)]] <-
+          tmp$desc[match(common_names, tmp$name)]
       }
-      datatable(
-        dat,
-        escape = FALSE,
-        
-        selection = "none",
-        rownames = FALSE,
-        
-        callback = DT::JS("
       
-     var selected = [];
-
-$('.param_check:checked').each(function(){
-    selected.push($(this).val());
-});
-
-
-
-        Shiny.setInputValue(
-          'checked_parameters',
-          selected,
-          {priority:'event'}
-        );
-
+      parameter_table_rv(parameter_table)
       
-
-
-      table.on('draw.dt',function(){
-
-        $('.param_check').each(function(){
-
-          var value = $(this).val();
-
-          if($(this).prop('checked')){
-
-            if(selected.indexOf(value) === -1){
-              selected.push(value);
-            }
-
-          } else {
-
-            selected = selected.filter(function(x){
-              return x !== value;
-            });
-
-          }
-
-        });
-
-
-        $('.param_check').each(function(){
-
-          if(selected.indexOf($(this).val()) !== -1){
-
-            $(this).prop('checked',true);
-
-          }
-
-        });
-
-
-      Shiny.setInputValue(
-  'checked_parameters',
-  selected,
-  {priority:'event'}
-);
-
-      });
-
-
-
-      table.on('change','.param_check',function(){
-
-        var value = $(this).val();
-
-        if($(this).prop('checked')){
-
-          if(selected.indexOf(value) === -1){
-            selected.push(value);
-          }
-
-        } else {
-
-          selected = selected.filter(function(x){
-            return x !== value;
-          });
-
-        }
-
-        Shiny.setInputValue(
-  'checked_parameters',
-  selected,
-  {priority:'event'}
-);
-
-      });
-
-    "),
-        
-        
-        options = list(
-          
-          paging = FALSE,
-          
-          scrollX = TRUE,
-          
-          scrollCollapse = TRUE,
-          
-          autoWidth = FALSE,
-          
-          searching = TRUE,
-          
-          lengthChange = FALSE,
-          
-          columnDefs = list(
-            
-            list(
-              targets = 0,
-              width = "35px"
-            ),
-            
-            list(
-              targets = 1,
-              width = "80px"
-            ),
-            
-            list(
-              targets = 2,
-              width = "80px"
-            ),
-            
-            list(
-              targets = 3:(ncol(dat)-1),
-              width = "80px"
-            )
-  
-          )
-          
+      merge_summary(NULL)
+      parameters_validated(FALSE)
+      
+      showNotification(
+        paste(
+          nrow(matching),
+          "RAW files matched;",
+          length(common_names),
+          "common parameters found."
         ),
-        
-        class = "compact stripe hover",
-        
-        width = "50%"
+        type = "message"
       )
       
-      output$parameter_selector <- renderUI({
-        
-        selectInput(
-          "selected_parameters",
-          "Parameters to keep",
-          choices = common_names,
-          selected = common_names,
-          multiple = TRUE
-        )
-        
-      })
+    }, error = function(e) {
       
+      matching_rv(NULL)
+      matching_validated(FALSE)
+      parameter_table_rv(NULL)
       
-    }
-  )
+      showNotification(
+        paste("File validation failed:", conditionMessage(e)),
+        type = "error",
+        duration = NULL
+      )
+      
+    })
+    
+  })
   output$parameter_table <- renderDT({
     
     dat <- parameter_table_rv()
@@ -1355,19 +1187,7 @@ Shiny.setInputValue(
     
     dat <- methods()
     
-    raw_path <- parseDirPath(
-      roots,
-      input$raw_dir
-    )
-    
-    
-    raw_files <- list.files(
-      raw_path,
-      pattern="\\.fcs$",
-      full.names=TRUE,
-      ignore.case=TRUE
-    )
-    
+    raw_file_list <- raw_files()
     
     # ==========================================
     # Labels affichage avec desc entre parenth??ses
@@ -1408,7 +1228,7 @@ Shiny.setInputValue(
         
         methods = dat$suffix,
         
-        n_files = length(raw_files),
+        n_files = length(raw_file_list),
         
         n_parameters = length(params),
         
@@ -1418,19 +1238,26 @@ Shiny.setInputValue(
         # noms enrichis pour l'affichage
         parameter_labels = unique(parameter_labels),
         
-        
         folders = rbind(
           
           data.frame(
             type = "RAW",
-            folder = basename(raw_path),
+            folder = if (identical(app_mode, "local")) {
+              raw_path()
+            } else {
+              "Uploaded RAW files"
+            },
             suffix = "",
             stringsAsFactors = FALSE
           ),
           
           data.frame(
             type = "Correction",
-            folder = basename(dat$path),
+            folder = if (identical(app_mode, "local")) {
+              dat$path
+            } else {
+              paste(dat$suffix, "files")
+            },
             suffix = dat$suffix,
             stringsAsFactors = FALSE
           )
@@ -1636,8 +1463,11 @@ Shiny.setInputValue(
       ),
       
       Folder = basename(s$folders$folder),
-      
-      Parent_path = dirname(s$folders$folder),
+      Parent_path = ifelse(
+        grepl("Uploaded", s$folders$folder),
+        "-",
+        dirname(s$folders$folder)
+      ),
       
       stringsAsFactors = FALSE
     )
@@ -2039,12 +1869,9 @@ Shiny.setInputValue(
       method_files <- list()
       
       
-      for(m in names(matching)[-1]){
-        
-        method_files[[m]] <- matching[i,m]
-        
+      for (m in names(matching)[-1]) {
+        method_files[[m]] <- matching[[m]][i]
       }
-      
       
       for(marker in parameters){
         
@@ -2122,6 +1949,7 @@ Shiny.setInputValue(
   observeEvent(input$run_merge,{
     
     
+    
     matching <- matching_rv()
     params <- selected_parameters_rv()
     
@@ -2135,9 +1963,17 @@ Shiny.setInputValue(
       "Merged_FCS"
     )
     
+    if (!dir.exists(out_dir)) {
+      dir.create(
+        out_dir,
+        recursive = TRUE,
+        showWarnings = FALSE
+      )
+    }
     
-    if(!dir.exists(out_dir))
-      dir.create(out_dir)
+    if (!dir.exists(out_dir)) {
+      stop("Unable to create the output directory.")
+    }
     
     
     withProgress(
@@ -2162,7 +1998,7 @@ Shiny.setInputValue(
           for(method in names(matching)[-1]){
             
             method_files[[method]] <-
-              matching[i,method]
+              matching[[method]][i]
             
           }
           
@@ -2223,13 +2059,12 @@ Shiny.setInputValue(
   
   viz_dir <- reactive({
     
-    raw_path <- parseDirPath(
-      roots,
-      input$raw_dir
-    )
+    matching <- matching_rv()
+    
+    req(matching)
     
     file.path(
-      raw_path,
+      dirname(matching$raw_file[1]),
       "Merged_FCS"
     )
     
@@ -2272,17 +2107,6 @@ Shiny.setInputValue(
           title = "Merge report",
           status = "info",
           solidHeader = TRUE,
-          
-          
-          div(
-            
-            class = "merge-status",
-            
-            verbatimTextOutput(
-              "merge_status"
-            )
-            
-          )
           
         ),
         
@@ -2812,7 +2636,45 @@ Shiny.setInputValue(
       }
     )
     
-    
+    output$download_fcs <- downloadHandler(
+      
+      filename = function() {
+        paste0("FCS_Merge_", Sys.Date(), ".zip")
+      },
+      
+      content = function(file) {
+        
+        req(merge_finished())
+        
+        out_dir <- viz_dir()
+        
+        fcs_files <- list.files(
+          out_dir,
+          pattern = "\\.fcs$",
+          full.names = TRUE,
+          ignore.case = TRUE
+        )
+        
+        validate(
+          need(
+            length(fcs_files) > 0,
+            "No merged FCS files found."
+          )
+        )
+        
+        old_wd <- getwd()
+        on.exit(setwd(old_wd), add = TRUE)
+        
+        setwd(out_dir)
+        
+        utils::zip(
+          zipfile = file,
+          files = basename(fcs_files)
+        )
+      },
+      
+      contentType = "application/zip"
+    )
     observeEvent(input$summaryTable,{
       req(input$report)
       
