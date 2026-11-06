@@ -9,18 +9,74 @@ library(dplyr)
 library(tidyr)
 library(shinyjs)
 library(rsconnect)
+library(flowCore)
 
 
 server <- function(input, output, session){
+  
+  library(flowCore)
+  
+  read_fcs_with_compensation <- function(file) {
+    
+    # Read FCS file
+    ff <- read.FCS(
+      file,
+      transformation = FALSE,
+      truncate_max_range = FALSE
+    )
+    
+    # Extract keywords
+    keywords <- keyword(ff)
+    
+    # Detect SPILL or SPILLOVER
+    spill <- keywords[["$SPILLOVER"]]
+    
+    if (is.null(spill)) {
+      spill <- keywords[["SPILL"]]
+    }
+    
+    # Apply compensation if available
+    if (!is.null(spill)) {
+      
+      message("Spillover matrix detected: ", basename(file))
+      
+      spill_matrix <- spillover(ff)
+      
+      if (!is.null(spill_matrix)) {
+        
+        ff <- compensate(ff, spill_matrix)
+        
+        message("Compensation applied.")
+        
+      }
+      
+    } else {
+      
+      message("No spillover matrix: ", basename(file))
+      
+    }
+    
+    return(ff)
+  }
+  
+  
   uploaded_methods <- reactiveVal(data.frame(
     id = integer(),
     name = character(),
+    datapath = character(),
     path = character(),
     stringsAsFactors = FALSE
   ))
-  # "local" : sélection de dossiers avec shinyFiles
-  # "upload" : fichiers envoyés au serveur Posit
-  app_mode <- Sys.getenv("FCS_MERGE_MODE", "upload")
+  
+  upload_dir <- tempfile("FCS_Merge_")
+  dir.create(upload_dir, recursive = TRUE)
+  
+  session$onSessionEnded(function() {
+    unlink(upload_dir, recursive = TRUE)
+  })
+  
+  
+  app_mode <- Sys.getenv("FCS_MERGE_MODE", "upload") # local or upload / upload for server deployment
   
   parameter_table_rv <- reactiveVal(NULL)
   merge_summary <- reactiveVal(NULL)
@@ -30,8 +86,13 @@ server <- function(input, output, session){
   parameters_validated <- reactiveVal(FALSE)
   merge_finished <- reactiveVal(FALSE)
   matching_validated <- reactiveVal(FALSE)
-  
+  viz_markers_rv <- reactiveVal(NULL)
+  marker_x_rv <- reactiveVal(NULL)
+  marker_y_rv <- reactiveVal(NULL)
   raw_files_rv <- reactiveVal(character())
+  raw_names_rv <- reactiveVal(character())
+  listObject <- reactiveValues(
+    choices = NULL)
   # ==================================================
   # CROSS-PLATFORM PATHS
   # ==================================================
@@ -106,6 +167,7 @@ server <- function(input, output, session){
       
     })
     
+  
     output$raw_path <- renderText({
       raw_path()
     })
@@ -195,73 +257,74 @@ server <- function(input, output, session){
   # ==================================================
   # ADD METHOD + DIRECTORY
   # ==================================================
-  observeEvent(
-    input$add_method,
-    {
+  
+  observeEvent(input$add_method, {
+    
+    dat <- methods()
+    
+    # Sauvegarder les suffixes
+    if (nrow(dat) > 0) {
       
-      dat <- methods()
-      
-      if(nrow(dat) > 0){
+      for (i in dat$id) {
         
-        for(i in dat$id){
-          
-          value <- input[[paste0("suffix_", i)]]
-          
-          if(!is.null(value)){
-            dat$suffix[dat$id == i] <- value
-          }
-          
+        value <- input[[paste0("suffix_", i)]]
+        
+        if (!is.null(value)) {
+          dat$suffix[dat$id == i] <- value
         }
         
       }
       
-   
-      id <- next_id()
-      next_id(id + 1)
+    }
+    
+    # Nouvel identifiant
+    id <- next_id()
+    next_id(id + 1)
+    
+    dat <- rbind(
+      dat,
+      data.frame(
+        id = id,
+        suffix = paste0("process", id),
+        path = "",
+        stringsAsFactors = FALSE
+      )
+    )
+    
+    methods(dat)
+    
+    # ==========================================
+    # MODE LOCAL
+    # ==========================================
+    
+    if (identical(app_mode, "local")) {
       
-      
-      dat <- rbind(
-        dat,
-        data.frame(
-          id = id,
-          suffix = paste0("process", id),
-          path = "",
-          stringsAsFactors = FALSE
-        )
+      shinyDirChoose(
+        input,
+        paste0("method_dir_", id),
+        roots = roots
       )
       
-   
-      methods(dat)
-      
-    
-      if (identical(app_mode, "local")) {
+      local({
         
-        shinyDirChoose(
-          input,
-          paste0("method_dir_", id),
-          roots = roots
-        )
+        method_id <- id
         
         observeEvent(
-          input[[paste0("method_dir_", id)]],
+          input[[paste0("method_dir_", method_id)]],
           {
             
-            folder_input <- input[[paste0("method_dir_", id)]]
+            folder_input <- input[[paste0("method_dir_", method_id)]]
             
-            if (is.null(folder_input)) {
-              return()
-            }
+            if (is.null(folder_input)) return()
             
             path <- normalize_dir(
               parseDirPath(roots, folder_input)
             )
             
-            if (is.na(path)) {
-              return()
-            }
+            if (is.na(path)) return()
             
             dat <- methods()
-            idx <- match(id, dat$id)
+            idx <- match(method_id, dat$id)
             
             if (!is.na(idx)) {
               dat$path[idx] <- path
@@ -272,10 +335,10 @@ server <- function(input, output, session){
           ignoreInit = TRUE
         )
         
-        output[[paste0("method_path_", id)]] <- renderText({
+        output[[paste0("method_path_", method_id)]] <- renderText({
           
           dat <- methods()
-          idx <- match(id, dat$id)
+          idx <- match(method_id, dat$id)
           
           if (is.na(idx) || !nzchar(dat$path[idx])) {
             return("No folder selected")
@@ -285,32 +348,62 @@ server <- function(input, output, session){
           
         })
         
-      }
+      })
       
+    }
+    
+    # ==========================================
+    # MODE UPLOAD
+    # ==========================================
+    
+    if (identical(app_mode, "upload")) {
       
-   
-
-      output[[paste0("method_path_", id)]] <- renderText({
+      local({
         
-        dat <- methods()
+        method_id <- id
         
-        idx <- match(id, dat$id)
-        
-        if(is.na(idx)){
-          return("No folder selected")
-        }
-        
-        if(dat$path[idx] == ""){
-          return("No folder selected")
-        }
-        
-        dat$path[idx]
+        output[[paste0("method_uploaded_", method_id)]] <- renderUI({
+          
+          uploaded <- uploaded_methods()
+          
+          files <- uploaded[
+            uploaded$id == method_id,
+            ,
+            drop = FALSE
+          ]
+          
+          if (nrow(files) == 0) {
+            return(
+              tags$p(
+                "No files uploaded",
+                style = "color:grey;font-style:italic;"
+              )
+            )
+          }
+          
+          tagList(
+            
+            tags$p(
+              strong(
+                paste(nrow(files), "FCS files uploaded")
+              ),
+              style = "color:green;"
+            ),
+            
+            tags$ul(
+              lapply(files$name, tags$li)
+            )
+            
+          )
+          
+        })
         
       })
       
-      
     }
-  )
+    
+  })
+  
   # ==================================================
   # DELETE METHOD
   # ==================================================
@@ -362,55 +455,88 @@ server <- function(input, output, session){
     
   })
   
+  # ==================================================
+  # UPLOAD METHODS - PERSISTENT STORAGE
+  # ==================================================
+  
   observe({
+    
     dat <- methods()
     
-    if (nrow(dat) == 0) return()
+    req(nrow(dat) > 0)
     
     uploaded <- uploaded_methods()
     
-    for (i in seq_len(nrow(dat))) {
+    for (id in dat$id) {
       
-      id <- dat$id[i]
       input_id <- paste0("method_file_", id)
       
       files <- input[[input_id]]
       
-      if (!is.null(files) && nrow(files) > 0) {
+      if (is.null(files) || nrow(files) == 0)
+        next
+      
+      for (j in seq_len(nrow(files))) {
         
-        for (j in seq_len(nrow(files))) {
-          
-          idx <- which(
+        # Vérifier si ce fichier a déjà été traité
+        idx <- which(
+          uploaded$id == id &
+            uploaded$datapath == files$datapath[j]
+        )
+        
+        if (length(idx) > 0)
+          next
+        
+        # Créer un chemin indépendant des fichiers temporaires Shiny
+        ext <- tools::file_ext(files$name[j])
+        
+        destination <- tempfile(
+          pattern = paste0("method_", id, "_"),
+          tmpdir = upload_dir,
+          fileext = paste0(".", ext)
+        )
+        
+        copied <- file.copy(
+          files$datapath[j],
+          destination,
+          overwrite = TRUE
+        )
+        
+        if (!copied)
+          next
+        
+        # Remplacer une ancienne version du même fichier
+        uploaded <- uploaded[
+          !(
             uploaded$id == id &
               uploaded$name == files$name[j]
-          )
-          
-          new_file <- data.frame(
+          ),
+          ,
+          drop = FALSE
+        ]
+        
+        uploaded <- rbind(
+          uploaded,
+          data.frame(
             id = id,
             name = files$name[j],
-            path = files$datapath[j],
+            datapath = files$datapath[j],
+            path = destination,
             stringsAsFactors = FALSE
           )
-          
-          if (length(idx) > 0) {
-            uploaded[idx, ] <- new_file
-          } else {
-            uploaded <- rbind(uploaded, new_file)
-          }
-        }
+        )
+        
       }
+      
     }
     
     uploaded_methods(uploaded)
+    
   })
 
   
   # ==================================================
   # UI METHODS
-  # ==================================================
-  
-  # ==================================================
-  # UI METHODS - INSERTION SANS RECREER LES ANCIENS
   # ==================================================
   
   output$methods_container <- renderUI({
@@ -517,16 +643,8 @@ server <- function(input, output, session){
   
   output$validate_button <- renderUI({
     
-    ## ==========================
-    ## Verification RAW
-    ## ==========================
-    
-    raw_ok <- length(raw_files()) > 0
-    
-    ## ==========================
-    ## V??rification m??thodes
-    ## ==========================
-    
+   raw_ok <- length(raw_files()) > 0
+
     dat <- methods()
     
     if (!raw_ok || nrow(dat) == 0) {
@@ -562,11 +680,7 @@ server <- function(input, output, session){
       }
       
     }
-    
-    ## ==========================
-    ## Affichage bouton
-    ## ==========================
-    
+   
     if (isTRUE(all_ok)) {
       
       actionButton(
@@ -605,7 +719,7 @@ server <- function(input, output, session){
       
       source <- method_sources[[method_name]]
       
-      # Une source peut être un dossier ou une liste de fichiers
+  
       if (length(source) == 1 && dir.exists(source)) {
         
         method_files <- list.files(
@@ -664,16 +778,11 @@ server <- function(input, output, session){
         } else {
           
           raw_fcs <- tryCatch(
-            flowCore::read.FCS(
-              raw_files[i],
-              transformation = FALSE,
-              truncate_max_range = FALSE
-            ),
+            read_fcs_with_compensation(raw_files[1]),
             error = function(e) NULL
           )
           
           if (!is.null(raw_fcs)) {
-            
             raw_cells <- nrow(flowCore::exprs(raw_fcs))
             
             cell_diff <- vapply(
@@ -681,11 +790,7 @@ server <- function(input, output, session){
               function(f) {
                 
                 fcs <- tryCatch(
-                  flowCore::read.FCS(
-                    f,
-                    transformation = FALSE,
-                    truncate_max_range = FALSE
-                  ),
+                  read_fcs_with_compensation(f),
                   error = function(e) NULL
                 )
                 
@@ -720,8 +825,7 @@ server <- function(input, output, session){
 
   output$validate_parameters_button <- renderUI({
     
-    
-    # Pas encore de fichiers valid??s
+
     if(!isTRUE(matching_validated()) || is.null(parameter_table_rv())){
       
       return(
@@ -755,7 +859,6 @@ server <- function(input, output, session){
     }
     
     
-    # Fichiers OK -> affichage param??tres
     tagList(
       
       p(
@@ -847,11 +950,7 @@ server <- function(input, output, session){
       )
     }
     
-    fcs <- flowCore::read.FCS(
-      file,
-      transformation = FALSE,
-      truncate_max_range = FALSE
-    )
+    fcs <- read_fcs_with_compensation(file)
     
     data <- fcs@parameters@data
     
@@ -905,7 +1004,20 @@ server <- function(input, output, session){
         raw_file_list,
         method_paths
       )
+      # Conserver les noms originaux des fichiers RAW
+      if (identical(app_mode, "upload")) {
+        
+        raw_names <- input$raw_files$name[
+          match(matching$raw_file, input$raw_files$datapath)
+        ]
+        
+      } else {
+        
+        raw_names <- basename(matching$raw_file)
+        
+      }
       
+      raw_names_rv(raw_names)
       matching_rv(matching)
       matching_validated(TRUE)
       
@@ -1493,12 +1605,7 @@ Shiny.setInputValue(
                             output_file){
     
     
-    raw_fcs <- read.FCS(
-      raw_file,
-      transformation = FALSE,
-      truncate_max_range = FALSE
-    )
-    
+    raw_fcs <- read_fcs_with_compensation(raw_file)
     
     for(method_name in names(method_files)){
       
@@ -1657,11 +1764,7 @@ Shiny.setInputValue(
     all_data <- list()
     
     
-    raw <- read.FCS(
-      raw_file,
-      transformation = FALSE,
-      truncate_max_range = FALSE
-    )
+    raw <- read_fcs_with_compensation(raw_file)
     
     
     if(marker %in% colnames(exprs(raw))){
@@ -1678,11 +1781,7 @@ Shiny.setInputValue(
       
       if(!is.na(f) && file.exists(f)){
         
-        fcs <- read.FCS(
-          f,
-          transformation = FALSE,
-          truncate_max_range = FALSE
-        )
+        fcs <- read_fcs_with_compensation(f)
         
         
         if(marker %in% colnames(exprs(fcs))){
@@ -1958,7 +2057,7 @@ Shiny.setInputValue(
   }
   observeEvent(input$run_merge,{
     
-    
+    merge_finished(FALSE)
     
     matching <- matching_rv()
     params <- selected_parameters_rv()
@@ -2017,7 +2116,7 @@ Shiny.setInputValue(
             out_dir,
             paste0(
               tools::file_path_sans_ext(
-                basename(raw_file)
+                raw_names_rv()[i]
               ),
               "_Merged.fcs"
             )
@@ -2044,13 +2143,15 @@ Shiny.setInputValue(
       pattern = "\\.fcs$",
       full.names = FALSE
     )
-    
+
     updateSelectInput(
       session,
       "viz_fcs",
       choices = files,
       selected = files[1]
     )
+    
+   
     output$merge_status <- renderText({
       
       paste(
@@ -2080,7 +2181,7 @@ Shiny.setInputValue(
     
   })
   
-  
+
   # Liste des fichiers merged
   observe({
     
@@ -2099,10 +2200,22 @@ Shiny.setInputValue(
     )
     
   })
-  
+  output$download_fcs_ui <- renderUI({
+    
+ 
+    req(isTRUE(merge_finished()))
+    
+    downloadButton(
+      "download_fcs",
+      "Download merged FCS files (.zip)",
+      icon = icon("download"),
+      class = "btn-success"
+    )
+    
+  })
   output$merge_report_ui <- renderUI({
     
-    req(merge_finished())
+
     
     fluidRow(
       
@@ -2146,11 +2259,7 @@ Shiny.setInputValue(
       input$viz_fcs
     )
     
-    fcs <- read.FCS(
-      f,
-      transformation = FALSE,
-      truncate_max_range = FALSE
-    )
+    fcs <- read_fcs_with_compensation(f)
     
     params <- colnames(exprs(fcs))
     
@@ -2184,19 +2293,28 @@ Shiny.setInputValue(
         )
       )
     )
-  
+  listObject$choices<-choices
     selectInput(
       "viz_markers",
       "Columns to overlay",
       choices = choices,
-      selected = params[1],
+      selected = {
+        previous <- viz_markers_rv()
+        if (!is.null(previous)) {
+          intersect(previous, params)
+        } else {
+          params[1]
+        }
+      },
       multiple = TRUE
     )
     
   })
   
   
- 
+  observeEvent(input$viz_markers, {
+    viz_markers_rv(input$viz_markers)
+  }, ignoreInit = TRUE)
   # ==================================================
   # SELECTION DES DEUX MARQUEURS
   # ==================================================
@@ -2212,11 +2330,7 @@ Shiny.setInputValue(
       need(file.exists(f), "Merged FCS file not found.")
     )
     
-    fcs <- flowCore::read.FCS(
-      f,
-      transformation = FALSE,
-      truncate_max_range = FALSE
-    )
+    fcs <- read_fcs_with_compensation(f)
     
     params <- colnames(flowCore::exprs(fcs))
     
@@ -2226,29 +2340,45 @@ Shiny.setInputValue(
     
     names(params) <- NULL
     
+    
     tagList(
       selectInput(
         "marker_x",
         "Marker X",
-        choices = params,
-        selected = params[1]
+        choices = listObject$choices,
+        selected = {
+          previous <- marker_x_rv()
+          if (!is.null(previous) && previous %in% params) {
+            previous
+          } else {
+            params[1]
+          }
+        }
       ),
       
       selectInput(
         "marker_y",
         "Marker Y",
-        choices = params,
-        selected = params[2]
+        choices = listObject$choices,
+        selected = {
+          previous <- marker_y_rv()
+          if (!is.null(previous) && previous %in% params) {
+            previous
+          } else {
+            params[2]
+          }
+        }
       )
     )
   })
+  observeEvent(input$marker_x, {
+    marker_x_rv(input$marker_x)
+  }, ignoreInit = TRUE)
   
-  
-  # ==================================================
-  # PLOT DENSITY FLOWDENSITY
-  # ==================================================
-  
-  
+  observeEvent(input$marker_y, {
+    marker_y_rv(input$marker_y)
+  }, ignoreInit = TRUE)
+ 
   # ==================================================
   # PLOT DENSITY AVEC densCols()
   # ==================================================
@@ -2274,12 +2404,7 @@ Shiny.setInputValue(
       need(file.exists(f), "Merged FCS file not found.")
     )
     
-    fcs <- flowCore::read.FCS(
-      f,
-      transformation = FALSE,
-      truncate_max_range = FALSE
-    )
-    
+    fcs <- read_fcs_with_compensation(f)
     channels <- c(input$marker_x, input$marker_y)
     
     validate(
@@ -2288,12 +2413,7 @@ Shiny.setInputValue(
         "One or both selected markers are missing."
       )
     )
-    
-    # --------------------------------
-    # Récupération des valeurs
-    # --------------------------------
-    
-    dat <- flowCore::exprs(fcs)[, channels, drop = FALSE]
+  dat <- flowCore::exprs(fcs)[, channels, drop = FALSE]
     
     valid <- apply(
       dat,
@@ -2363,10 +2483,7 @@ Shiny.setInputValue(
       plot_ylim <- c(y_min, y_max)
       
     }
-    
-    # --------------------------------
-    # Couleurs selon la densité
-    # --------------------------------
+  
     if (input$density){
       
       cols <- grDevices::densCols(
@@ -2413,7 +2530,7 @@ Shiny.setInputValue(
       ylim = plot_ylim
     )
     
-  }, res = 110)
+  }, res = 96)
   
   
   output$overlay_hist <- renderPlot({
@@ -2428,11 +2545,7 @@ Shiny.setInputValue(
       input$viz_fcs
     )
     
-    fcs <- read.FCS(
-      f,
-      transformation = FALSE,
-      truncate_max_range = FALSE
-    )
+    fcs <- read_fcs_with_compensation(f)
     
     dat <- as.data.frame(exprs(fcs))
     
@@ -2515,7 +2628,6 @@ Shiny.setInputValue(
       )
     )
     
-    # Vertical offset
     offset <- ymax * 0.15
     
     cols <- rainbow(
@@ -2583,9 +2695,6 @@ Shiny.setInputValue(
     
   }, width = 700, height = 700)
   
-  
-  
- 
     output$download_report <- downloadHandler(
       
       filename = function(){
@@ -2642,7 +2751,7 @@ Shiny.setInputValue(
         
       }
     )
-    
+ 
     output$download_fcs <- downloadHandler(
       
       filename = function() {
@@ -2651,7 +2760,7 @@ Shiny.setInputValue(
       
       content = function(file) {
         
-        req(merge_finished())
+   
         
         out_dir <- viz_dir()
         
@@ -2683,6 +2792,8 @@ Shiny.setInputValue(
       contentType = "application/zip"
     )
  
+    
+    
 }
 
 

@@ -5,6 +5,6 @@ account: fcs-merge-app
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 18339535
-bundleId: 12772955
+bundleId: 12786814
 url: https://fcs-merge-app.shinyapps.io/fcs-merge/
 version: 1
