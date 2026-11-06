@@ -7,7 +7,7 @@ FCS-Merge is a Shiny application designed to merge Flow Cytometry Standard (FCS)
 The application allows users to:
   
   - Upload raw FCS files.
-- Select processed FCS files from different correction methods.
+- Select processed FCS files from different methods.
 - Select parameters to include in the merge.
 - Merge FCS files.
 - Visualize merged data using histograms and 2D density plots.
