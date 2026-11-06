@@ -59,7 +59,7 @@ server <- function(input, output, session){
     return(ff)
   }
   
-  
+
   uploaded_methods <- reactiveVal(data.frame(
     id = integer(),
     name = character(),
@@ -478,7 +478,7 @@ server <- function(input, output, session){
       
       for (j in seq_len(nrow(files))) {
         
-        # Vérifier si ce fichier a déjà été traité
+     
         idx <- which(
           uploaded$id == id &
             uploaded$datapath == files$datapath[j]
@@ -487,7 +487,7 @@ server <- function(input, output, session){
         if (length(idx) > 0)
           next
         
-        # Créer un chemin indépendant des fichiers temporaires Shiny
+
         ext <- tools::file_ext(files$name[j])
         
         destination <- tempfile(
@@ -505,7 +505,7 @@ server <- function(input, output, session){
         if (!copied)
           next
         
-        # Remplacer une ancienne version du même fichier
+  
         uploaded <- uploaded[
           !(
             uploaded$id == id &
@@ -534,10 +534,6 @@ server <- function(input, output, session){
     
   })
 
-  
-  # ==================================================
-  # UI METHODS
-  # ==================================================
   
   output$methods_container <- renderUI({
     
@@ -743,7 +739,7 @@ server <- function(input, output, session){
     
       matched <- rep(NA_character_, length(raw_files))
       
-      # Aucun fichier méthode disponible
+
       if (length(method_files) == 0) {
         results[[method_name]] <- matched
         next
@@ -970,7 +966,7 @@ server <- function(input, output, session){
       req(length(raw_file_list) > 0)
       req(nrow(dat) > 0)
       
-      # Récupérer les suffixes saisis
+    
       for (i in dat$id) {
         value <- input[[paste0("suffix_", i)]]
         
@@ -979,7 +975,7 @@ server <- function(input, output, session){
         }
       }
       
-      # Vérifier que les suffixes sont renseignés et uniques
+  
       validate(
         need(
           all(nzchar(trimws(dat$suffix))),
@@ -993,18 +989,17 @@ server <- function(input, output, session){
       
       methods(dat)
       
-      # Récupérer les fichiers ou dossiers des méthodes
+     
       method_paths <- get_method_sources()
       
-      # Mettre les suffixes à jour comme noms de liste
+ 
       names(method_paths) <- dat$suffix
-      
-      # Faire correspondre les fichiers RAW et méthode
+
       matching <- match_fcs_files(
         raw_file_list,
         method_paths
       )
-      # Conserver les noms originaux des fichiers RAW
+  
       if (identical(app_mode, "upload")) {
         
         raw_names <- input$raw_files$name[
@@ -1021,13 +1016,13 @@ server <- function(input, output, session){
       matching_rv(matching)
       matching_validated(TRUE)
       
-      # Choisir un fichier RAW pour identifier les paramètres
+
       raw_file <- matching$raw_file[1]
       
       param_list <- list()
       param_list$RAW <- get_fcs_parameters(raw_file)
       
-      # Récupérer les paramètres des fichiers méthode correspondants
+
       for (col in names(matching)[-1]) {
         
         method_file <- matching[[col]][
@@ -1037,7 +1032,7 @@ server <- function(input, output, session){
         param_list[[col]] <- get_fcs_parameters(method_file)
       }
       
-      # Garder les paramètres communs à tous les fichiers
+ 
       common_names <- Reduce(
         intersect,
         lapply(param_list, function(x) x$name)
@@ -1054,7 +1049,7 @@ server <- function(input, output, session){
         stringsAsFactors = FALSE
       )
       
-      # Ajouter les descriptions des méthodes
+
       for (n in names(param_list)) {
         
         tmp <- param_list[[n]]
@@ -1222,7 +1217,7 @@ Shiny.setInputValue(
         
         paging = FALSE,
         
-        # garde le scroll pour les tr??s grandes tables
+
         scrollX = TRUE,
         
         scrollCollapse = TRUE,
@@ -1311,9 +1306,7 @@ Shiny.setInputValue(
     
     raw_file_list <- raw_files()
     
-    # ==========================================
-    # Labels affichage avec desc entre parenth??ses
-    # ==========================================
+
     
     parameter_table <- parameter_table_rv()
     
@@ -1354,10 +1347,10 @@ Shiny.setInputValue(
         
         n_parameters = length(params),
         
-        # vrais noms utilis??s pour le merge
+  
         parameters = unique(params),
         
-        # noms enrichis pour l'affichage
+   
         parameter_labels = unique(parameter_labels),
         
         folders = rbind(
@@ -1637,7 +1630,7 @@ Shiny.setInputValue(
         next
       
       
-      # param??tres du fichier m??thode
+     
       method_params <- method_fcs@parameters@data
       
       
@@ -1702,10 +1695,7 @@ Shiny.setInputValue(
       }
       
     }
-    # ==========================================
-    # R??organisation des colonnes
-    # RAW marker puis corrections associ??es
-    # ==========================================
+
     
     current_expr <- exprs(raw_fcs)
     
@@ -1721,7 +1711,7 @@ Shiny.setInputValue(
         )
       }
       
-      # colonnes corrig??es associ??es
+ 
       added_cols <- grep(
         paste0("^", marker, "_"),
         colnames(current_expr),
@@ -1735,7 +1725,7 @@ Shiny.setInputValue(
     }
     
     
-    # garder les autres colonnes non s??lectionn??es
+
     remaining <- setdiff(
       colnames(current_expr),
       new_order
@@ -1825,7 +1815,7 @@ Shiny.setInputValue(
     )
     
     
-    gap <- ymax * 0.25   # espace vertical entre plots
+    gap <- ymax * 0.25   
     
     
     plots <- data.frame()
@@ -2182,7 +2172,7 @@ Shiny.setInputValue(
   })
   
 
-  # Liste des fichiers merged
+
   observe({
     
     req(dir.exists(viz_dir()))
@@ -2246,10 +2236,6 @@ Shiny.setInputValue(
   })
   
 
-  # ==================================================
-  # Param??tres disponibles
-  # ==================================================
-  
   output$viz_parameters <- renderUI({
     
     req(input$viz_fcs)
@@ -2315,10 +2301,7 @@ Shiny.setInputValue(
   observeEvent(input$viz_markers, {
     viz_markers_rv(input$viz_markers)
   }, ignoreInit = TRUE)
-  # ==================================================
-  # SELECTION DES DEUX MARQUEURS
-  # ==================================================
-  
+
   output$density_axes <- renderUI({
     
     req(input$viz_fcs)
@@ -2792,7 +2775,7 @@ Shiny.setInputValue(
       contentType = "application/zip"
     )
  
-    
+   
     
 }
 
