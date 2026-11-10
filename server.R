@@ -46,12 +46,7 @@ server <- function(input, output, session){
     # Si aucune matrice n'existe : ne pas compenser
     if (is.null(spill) || length(spill) == 0) {
       
-      message(
-        "No compensation matrix found: ",
-        basename(file),
-        " -> No compensation applied."
-      )
-      
+     
       return(ff)
     }
     
@@ -69,12 +64,6 @@ server <- function(input, output, session){
       ncol(spill_matrix) == 0 ||
       any(!is.finite(spill_matrix))
     ) {
-      
-      message(
-        "Invalid compensation matrix: ",
-        basename(file),
-        " -> No compensation applied."
-      )
       
       return(ff)
     }
@@ -2780,17 +2769,22 @@ Shiny.setInputValue(
       }
     )
  
+    
     output$download_fcs <- downloadHandler(
       
       filename = function() {
         paste0("FCS_Merge_", Sys.Date(), ".zip")
       },
       
+      contentType = "application/zip",
+      
       content = function(file) {
         
-   
-        
         out_dir <- viz_dir()
+        
+        if (is.null(out_dir) || !dir.exists(out_dir)) {
+          stop("The Merged_FCS directory does not exist.")
+        }
         
         fcs_files <- list.files(
           out_dir,
@@ -2799,26 +2793,24 @@ Shiny.setInputValue(
           ignore.case = TRUE
         )
         
-        validate(
-          need(
-            length(fcs_files) > 0,
-            "No merged FCS files found."
-          )
-        )
+        if (length(fcs_files) == 0) {
+          stop("No merged FCS files found.")
+        }
         
-        old_wd <- getwd()
-        on.exit(setwd(old_wd), add = TRUE)
-        
-        setwd(out_dir)
-        
-        utils::zip(
+        # Create ZIP archive
+        zip::zipr(
           zipfile = file,
-          files = basename(fcs_files)
+          files = basename(fcs_files),
+          root = out_dir
         )
-      },
-      
-      contentType = "application/zip"
+        
+        if (!file.exists(file) || file.info(file)$size == 0) {
+          stop("ZIP archive creation failed.")
+        }
+        
+      }
     )
+    
  
    
     
