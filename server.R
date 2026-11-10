@@ -2517,9 +2517,7 @@ Shiny.setInputValue(
           )
         )
       )
-      
-     
-      
+
     }else{
       cols="black"
     }
@@ -2537,16 +2535,25 @@ Shiny.setInputValue(
       xlab = input$marker_x,
       ylab = input$marker_y,
       
-      main = paste(
-        input$marker_x,
-        "vs",
-        input$marker_y
-      ),
+      main = paste("Marker :", input$marker_x, "\n",
+                   input$marker_x, "vs", input$marker_y),
       
       xlim = plot_xlim,
       ylim = plot_ylim
     )
     
+    # --------------------------------
+    # Ligne diagonale de référence Y = X
+    # --------------------------------
+    
+    abline(
+      a = 0,
+      b = 1,
+      col = "grey10",
+      lty = 2,
+      lwd = 2
+    )
+
   }, res = 96)
   
   
