@@ -28,43 +28,20 @@ server <- function(input, output, session){
     # Récupérer les keywords
     keywords <- flowCore::keyword(ff)
     
-    # Chercher la matrice SPILLOVER ou SPILL
-    spill <- keywords[["$SPILLOVER"]]
+    # Define the potential keyword names in order of preference
+    spill_keys <- c("$SPILLOVER", "SPILLOVER", "$SPILL", "SPILL")
     
-    if (is.null(spill) || length(spill) == 0) {
-      spill <- keywords[["SPILLOVER"]]
-    }
+    # Find the first matching keyword that actually exists and has content
+    spill <- Find(function(k) !is.null(keywords[[k]]) && length(keywords[[k]]) > 0, spill_keys)
+    spill_matrix <- if (!is.null(spill)) keywords[[spill]] else NULL
     
-    if (is.null(spill) || length(spill) == 0) {
-      spill <- keywords[["$SPILL"]]
-    }
-    
-    if (is.null(spill) || length(spill) == 0) {
-      spill <- keywords[["SPILL"]]
-    }
-    
-    # Si aucune matrice n'existe : ne pas compenser
-    if (is.null(spill) || length(spill) == 0) {
-      
-     
-      return(ff)
-    }
-    
-    # Essayer d'extraire la matrice
-    spill_matrix <- tryCatch(
-      flowCore::spillover(ff),
-      error = function(e) NULL
-    )
-    
-    # Si la matrice est absente ou invalide : ne pas compenser
-    if (
-      is.null(spill_matrix) ||
+    # If no matrix exists, return uncompensated flowFrame (with an optional warning)
+    if (is.null(spill_matrix) ||
       !is.matrix(spill_matrix) ||
       nrow(spill_matrix) == 0 ||
       ncol(spill_matrix) == 0 ||
       any(!is.finite(spill_matrix))
     ) {
-      
       return(ff)
     }
     
@@ -109,8 +86,10 @@ server <- function(input, output, session){
     unlink(upload_dir, recursive = TRUE)
   })
   
-  
-  app_mode <- Sys.getenv("FCS_MERGE_MODE", "upload") # local or upload / upload for server deployment
+  # local or upload / upload for server deployment
+  app_mode <- Sys.getenv("FCS_MERGE_MODE", "upload")
+  # local folder as root for shinyFiles
+  data_root <- Sys.getenv("DATA_ROOT", NA)
   
   parameter_table_rv <- reactiveVal(NULL)
   merge_summary <- reactiveVal(NULL)
@@ -143,7 +122,14 @@ server <- function(input, output, session){
     mustWork = TRUE
   )
   
+  if (identical(app_mode, "local") && !is.na(data_root) && dir.exists(data_root)) {
+    data_root <- normalizePath(data_root)
+  } else {
+    data_root <- NULL
+  }
+
   roots <- c(
+    Root = data_root,
     Home = home_dir,
     App = app_dir
   )
