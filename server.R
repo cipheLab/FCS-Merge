@@ -8,7 +8,6 @@ library(ggplot2)
 library(dplyr)
 library(tidyr)
 library(shinyjs)
-library(rsconnect)
 library(flowCore)
 
 
