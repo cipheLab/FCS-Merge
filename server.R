@@ -13,50 +13,96 @@ library(flowCore)
 
 server <- function(input, output, session){
   
-  library(flowCore)
+
+  
   
   read_fcs_with_compensation <- function(file) {
     
-    # Read FCS file
-    ff <- read.FCS(
+    # Lire le fichier FCS sans compensation automatique
+    ff <- flowCore::read.FCS(
       file,
       transformation = FALSE,
       truncate_max_range = FALSE
     )
     
-    # Extract keywords
-    keywords <- keyword(ff)
+    # Récupérer les keywords
+    keywords <- flowCore::keyword(ff)
     
-    # Detect SPILL or SPILLOVER
+    # Chercher la matrice SPILLOVER ou SPILL
     spill <- keywords[["$SPILLOVER"]]
     
-    if (is.null(spill)) {
+    if (is.null(spill) || length(spill) == 0) {
+      spill <- keywords[["SPILLOVER"]]
+    }
+    
+    if (is.null(spill) || length(spill) == 0) {
+      spill <- keywords[["$SPILL"]]
+    }
+    
+    if (is.null(spill) || length(spill) == 0) {
       spill <- keywords[["SPILL"]]
     }
     
-    # Apply compensation if available
-    if (!is.null(spill)) {
+    # Si aucune matrice n'existe : ne pas compenser
+    if (is.null(spill) || length(spill) == 0) {
       
-      message("Spillover matrix detected: ", basename(file))
+      message(
+        "No compensation matrix found: ",
+        basename(file),
+        " -> No compensation applied."
+      )
       
-      spill_matrix <- spillover(ff)
-      
-      if (!is.null(spill_matrix)) {
-        
-        ff <- compensate(ff, spill_matrix)
-        
-        message("Compensation applied.")
-        
-      }
-      
-    } else {
-      
-      message("No spillover matrix: ", basename(file))
-      
+      return(ff)
     }
+    
+    # Essayer d'extraire la matrice
+    spill_matrix <- tryCatch(
+      flowCore::spillover(ff),
+      error = function(e) NULL
+    )
+    
+    # Si la matrice est absente ou invalide : ne pas compenser
+    if (
+      is.null(spill_matrix) ||
+      !is.matrix(spill_matrix) ||
+      nrow(spill_matrix) == 0 ||
+      ncol(spill_matrix) == 0 ||
+      any(!is.finite(spill_matrix))
+    ) {
+      
+      message(
+        "Invalid compensation matrix: ",
+        basename(file),
+        " -> No compensation applied."
+      )
+      
+      return(ff)
+    }
+    
+    # Appliquer la compensation uniquement si la matrice est valide
+    ff <- tryCatch(
+      flowCore::compensate(ff, spill_matrix),
+      error = function(e) {
+        
+        warning(
+          "Compensation failed for ",
+          basename(file),
+          ": ",
+          conditionMessage(e)
+        )
+        
+        ff
+      }
+    )
+    
+    message(
+      "Compensation applied: ",
+      basename(file)
+    )
     
     return(ff)
   }
+  
   
 
   uploaded_methods <- reactiveVal(data.frame(
