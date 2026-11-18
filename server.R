@@ -1043,14 +1043,18 @@ server <- function(input, output, session){
       param_list$RAW <- get_fcs_parameters(raw_file)
       
 
-      for (col in names(matching)[-1]) {
+   for (col in names(matching)[-1]) {
         
-        method_file <- matching[[col]][
-          match(raw_file, matching$raw_file)
-        ]
+        method_file <- matching[[col]][1]
         
-        param_list[[col]] <- get_fcs_parameters(method_file)
+        if (!is.na(method_file)) {
+          
+          param_list[[col]] <-
+            get_fcs_parameters(method_file)
+          
+        }
       }
+      
       
  
       common_names <- Reduce(
