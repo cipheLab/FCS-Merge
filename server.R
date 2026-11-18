@@ -9,30 +9,32 @@ library(dplyr)
 library(tidyr)
 library(shinyjs)
 library(flowCore)
+library(stringdist)
+library(clue)
 
 server <- function(input, output, session){
-  
+
 
 
   read_fcs_with_compensation <- function(file) {
-    
+
     # Lire le fichier FCS sans compensation automatique
     ff <- flowCore::read.FCS(
       file,
       transformation = FALSE,
       truncate_max_range = FALSE
     )
-    
+
     # Récupérer les keywords
     keywords <- flowCore::keyword(ff)
-    
+
     # Define the potential keyword names in order of preference
     spill_keys <- c("$SPILLOVER", "SPILLOVER", "$SPILL", "SPILL")
-    
+
     # Find the first matching keyword that actually exists and has content
     spill <- Find(function(k) !is.null(keywords[[k]]) && length(keywords[[k]]) > 0, spill_keys)
     spill_matrix <- if (!is.null(spill)) keywords[[spill]] else NULL
-    
+
     # If no matrix exists, return uncompensated flowFrame (with an optional warning)
     if (is.null(spill_matrix) ||
       !is.matrix(spill_matrix) ||
@@ -42,32 +44,32 @@ server <- function(input, output, session){
     ) {
       return(ff)
     }
-    
+
     # Appliquer la compensation uniquement si la matrice est valide
     ff <- tryCatch(
       flowCore::compensate(ff, spill_matrix),
       error = function(e) {
-        
+
         warning(
           "Compensation failed for ",
           basename(file),
           ": ",
           conditionMessage(e)
         )
-        
+
         ff
       }
     )
-    
+
     message(
       "Compensation applied: ",
       basename(file)
     )
-    
+
     return(ff)
   }
-  
-  
+
+
 
   uploaded_methods <- reactiveVal(data.frame(
     id = integer(),
@@ -76,22 +78,22 @@ server <- function(input, output, session){
     path = character(),
     stringsAsFactors = FALSE
   ))
-  
+
   upload_dir <- tempfile("FCS_Merge_")
   dir.create(upload_dir, recursive = TRUE)
-  
+
   session$onSessionEnded(function() {
     unlink(upload_dir, recursive = TRUE)
   })
-  
+
   # local or upload / upload for server deployment
   app_mode <- Sys.getenv("FCS_MERGE_MODE", "upload")
   # local folder as root for shinyFiles
   data_root <- Sys.getenv("DATA_ROOT", NA)
-  
+
   parameter_table_rv <- reactiveVal(NULL)
   merge_summary <- reactiveVal(NULL)
-  
+
   matching_rv <- reactiveVal(NULL)
   selected_parameters_rv <- reactiveVal(NULL)
   parameters_validated <- reactiveVal(FALSE)
@@ -107,19 +109,19 @@ server <- function(input, output, session){
   # ==================================================
   # CROSS-PLATFORM PATHS
   # ==================================================
-  
+
   home_dir <- normalizePath(
     path.expand("~"),
     winslash = "/",
     mustWork = TRUE
   )
-  
+
   app_dir <- normalizePath(
     getwd(),
     winslash = "/",
     mustWork = TRUE
   )
-  
+
   if (identical(app_mode, "local") && !is.na(data_root) && dir.exists(data_root)) {
     data_root <- normalizePath(data_root)
   } else {
@@ -131,9 +133,9 @@ server <- function(input, output, session){
     Home = home_dir,
     App = app_dir
   )
-  
+
   normalize_dir <- function(path) {
-    
+
     if (
       is.null(path) ||
       length(path) == 0 ||
@@ -142,85 +144,85 @@ server <- function(input, output, session){
     ) {
       return(NA_character_)
     }
-    
+
     normalizePath(
       path[1],
       winslash = "/",
       mustWork = FALSE
     )
   }
-  
+
   # ==================================================
   # RAW FILES
   # ==================================================
-  
+
   if (identical(app_mode, "local")) {
-    
+
     shinyDirChoose(
       input,
       "raw_dir",
       roots = roots
     )
-    
+
     raw_path <- reactive({
-      
+
       req(input$raw_dir)
-      
+
       normalize_dir(
         parseDirPath(roots, input$raw_dir)
       )
-      
+
     })
-    
+
     raw_files <- reactive({
-      
+
       req(raw_path())
-      
+
       list.files(
         raw_path(),
         pattern = "\\.fcs$",
         full.names = TRUE,
         ignore.case = TRUE
       )
-      
+
     })
-    
-  
+
+
     output$raw_path <- renderText({
       raw_path()
     })
-    
+
   } else {
-    
+
     raw_path <- reactive(NULL)
-    
+
     raw_files <- reactive({
-      
+
       req(input$raw_files)
-      
+
       files <- input$raw_files
-      
+
       files$datapath
-      
+
     })
-    
+
     output$raw_path <- renderText({
-      
+
       req(input$raw_files)
-      
+
       paste(
         nrow(input$raw_files),
         "RAW FCS files uploaded"
       )
-      
+
     })
-    
+
   }
 
   # ==================================================
   # METHODS STORAGE
   # ==================================================
-  
+
   methods <- reactiveVal(
     data.frame(
       id = integer(),
@@ -230,75 +232,75 @@ server <- function(input, output, session){
     )
   )
   get_method_sources <- reactive({
-    
+
     dat <- methods()
     uploaded <- uploaded_methods()
-    
+
     sources <- list()
-    
+
     for (i in seq_len(nrow(dat))) {
-      
+
       id <- dat$id[i]
       suffix <- dat$suffix[i]
-      
+
       if (identical(app_mode, "local")) {
-        
+
         sources[[suffix]] <- dat$path[i]
-        
+
       } else {
-        
+
         files <- uploaded[
           uploaded$id == id,
           ,
           drop = FALSE
         ]
-        
+
         files <- files[
           file.exists(files$path),
           ,
           drop = FALSE
         ]
-        
+
         sources[[suffix]] <- files$path
-        
+
       }
-      
+
     }
-    
+
     sources
-    
+
   })
-  
+
   next_id <- reactiveVal(1)
-  
-  
+
+
   # ==================================================
   # ADD METHOD + DIRECTORY
   # ==================================================
-  
+
   observeEvent(input$add_method, {
-    
+
     dat <- methods()
-    
+
     # Sauvegarder les suffixes
     if (nrow(dat) > 0) {
-      
+
       for (i in dat$id) {
-        
+
         value <- input[[paste0("suffix_", i)]]
-        
+
         if (!is.null(value)) {
           dat$suffix[dat$id == i] <- value
         }
-        
+
       }
-      
+
     }
-    
+
     # Nouvel identifiant
     id <- next_id()
     next_id(id + 1)
-    
+
     dat <- rbind(
       dat,
       data.frame(
@@ -308,88 +310,88 @@ server <- function(input, output, session){
         stringsAsFactors = FALSE
       )
     )
-    
+
     methods(dat)
-    
+
     # ==========================================
     # MODE LOCAL
     # ==========================================
-    
+
     if (identical(app_mode, "local")) {
-      
+
       shinyDirChoose(
         input,
         paste0("method_dir_", id),
         roots = roots
       )
-      
+
       local({
-        
+
         method_id <- id
-        
+
         observeEvent(
           input[[paste0("method_dir_", method_id)]],
           {
-            
+
             folder_input <- input[[paste0("method_dir_", method_id)]]
-            
+
             if (is.null(folder_input)) return()
-            
+
             path <- normalize_dir(
               parseDirPath(roots, folder_input)
             )
-            
+
             if (is.na(path)) return()
-            
+
             dat <- methods()
             idx <- match(method_id, dat$id)
-            
+
             if (!is.na(idx)) {
               dat$path[idx] <- path
               methods(dat)
             }
-            
+
           },
           ignoreInit = TRUE
         )
-        
+
         output[[paste0("method_path_", method_id)]] <- renderText({
-          
+
           dat <- methods()
           idx <- match(method_id, dat$id)
-          
+
           if (is.na(idx) || !nzchar(dat$path[idx])) {
             return("No folder selected")
           }
-          
+
           dat$path[idx]
-          
+
         })
-        
+
       })
-      
+
     }
-    
+
     # ==========================================
     # MODE UPLOAD
     # ==========================================
-    
+
     if (identical(app_mode, "upload")) {
-      
+
       local({
-        
+
         method_id <- id
-        
+
         output[[paste0("method_uploaded_", method_id)]] <- renderUI({
-          
+
           uploaded <- uploaded_methods()
-          
+
           files <- uploaded[
             uploaded$id == method_id,
             ,
             drop = FALSE
           ]
-          
+
           if (nrow(files) == 0) {
             return(
               tags$p(
@@ -398,132 +400,132 @@ server <- function(input, output, session){
               )
             )
           }
-          
+
           tagList(
-            
+
             tags$p(
               strong(
                 paste(nrow(files), "FCS files uploaded")
               ),
               style = "color:green;"
             ),
-            
+
             tags$ul(
               lapply(files$name, tags$li)
             )
-            
+
           )
-          
+
         })
-        
+
       })
-      
+
     }
-    
+
   })
-  
+
   # ==================================================
   # DELETE METHOD
   # ==================================================
-  
+
   observe({
-    
+
     dat <- methods()
-    
-    
+
+
     if(nrow(dat)==0)
       return()
-    
-    
+
+
     for(i in dat$id){
-      
+
       local({
-        
+
         id <- i
-        
+
         observeEvent(
-          
+
           input[[paste0(
             "delete_",
             id
           )]],
-          
+
           {
-            
+
             dat <- methods()
-            
+
             dat <- dat[
               dat$id != id,
               ,
               drop=FALSE
             ]
-            
-            
+
+
             methods(dat)
-            
+
           },
-          
+
           ignoreInit=TRUE
-          
+
         )
-        
+
       })
-      
+
     }
-    
+
   })
-  
+
   # ==================================================
   # UPLOAD METHODS - PERSISTENT STORAGE
   # ==================================================
-  
+
   observe({
-    
+
     dat <- methods()
-    
+
     req(nrow(dat) > 0)
-    
+
     uploaded <- uploaded_methods()
-    
+
     for (id in dat$id) {
-      
+
       input_id <- paste0("method_file_", id)
-      
+
       files <- input[[input_id]]
-      
+
       if (is.null(files) || nrow(files) == 0)
         next
-      
+
       for (j in seq_len(nrow(files))) {
-        
-     
+
+
         idx <- which(
           uploaded$id == id &
             uploaded$datapath == files$datapath[j]
         )
-        
+
         if (length(idx) > 0)
           next
-        
+
 
         ext <- tools::file_ext(files$name[j])
-        
+
         destination <- tempfile(
           pattern = paste0("method_", id, "_"),
           tmpdir = upload_dir,
           fileext = paste0(".", ext)
         )
-        
+
         copied <- file.copy(
           files$datapath[j],
           destination,
           overwrite = TRUE
         )
-        
+
         if (!copied)
           next
-        
-  
+
+
         uploaded <- uploaded[
           !(
             uploaded$id == id &
@@ -532,7 +534,7 @@ server <- function(input, output, session){
           ,
           drop = FALSE
         ]
-        
+
         uploaded <- rbind(
           uploaded,
           data.frame(
@@ -543,20 +545,20 @@ server <- function(input, output, session){
             stringsAsFactors = FALSE
           )
         )
-        
+
       }
-      
+
     }
-    
+
     uploaded_methods(uploaded)
-    
+
   })
 
-  
+
   output$methods_container <- renderUI({
-    
+
     dat <- methods()
-    
+
     if (nrow(dat) == 0) {
       return(
         tags$div(
@@ -565,25 +567,25 @@ server <- function(input, output, session){
         )
       )
     }
-    
+
     tagList(
       lapply(dat$id, function(id) {
-        
+
         suffix <- dat$suffix[match(id, dat$id)]
-        
+
         fluidRow(
-          
+
           column(
             5,
-            
+
             box(
               width = 12,
               title = paste("Process", id),
               status = "info",
               solidHeader = TRUE,
-              
+
               if (identical(app_mode, "local")) {
-                
+
                 tagList(
                   shinyDirButton(
                     paste0("method_dir_", id),
@@ -591,17 +593,17 @@ server <- function(input, output, session){
                     "Select",
                     class = "btn-raw"
                   ),
-                  
+
                   br(),
                   br(),
-                  
+
                   verbatimTextOutput(
                     paste0("method_path_", id)
                   )
                 )
-                
+
               } else {
-                
+
                 tagList(
                   fileInput(
                     paste0("method_file_", id),
@@ -609,23 +611,23 @@ server <- function(input, output, session){
                     multiple = TRUE,
                     accept = ".fcs"
                   ),
-                  
+
                   uiOutput(
                     paste0("method_uploaded_", id)
                   )
                 )
-                
+
               }
             )
           ),
-          
+
           column(
             4,
-            
+
             box(
               width = 12,
               title = "Suffix",
-              
+
               textInput(
                 paste0("suffix_", id),
                 NULL,
@@ -633,12 +635,12 @@ server <- function(input, output, session){
               )
             )
           ),
-          
+
           column(
             2,
-            
+
             br(),
-            
+
             actionButton(
               paste0("delete_", id),
               "",
@@ -646,7 +648,7 @@ server <- function(input, output, session){
               class = "btn-danger"
             )
           )
-          
+
         )
       })
     )
@@ -654,377 +656,365 @@ server <- function(input, output, session){
   # ==================================================
   # CHECK
   # ==================================================
-  
+
   output$validate_button <- renderUI({
-    
+
    raw_ok <- length(raw_files()) > 0
 
     dat <- methods()
-    
+
     if (!raw_ok || nrow(dat) == 0) {
       return(NULL)
     }
-    
+
     all_ok <- TRUE
-    
+
     if (identical(app_mode, "local")) {
-      
+
       all_ok <- all(
         !is.na(dat$path) &
           nzchar(dat$path)
       )
-      
+
     } else {
-      
+
       uploaded <- uploaded_methods()
-      
+
       for (id in dat$id) {
-        
+
         files <- uploaded[
           uploaded$id == id,
           ,
           drop = FALSE
         ]
-        
+
         if (nrow(files) == 0) {
           all_ok <- FALSE
           break
         }
-        
+
       }
-      
+
     }
-   
+
     if (isTRUE(all_ok)) {
-      
+
       actionButton(
         "check_files",
         "Validate files",
         icon = icon("check"),
         class = "btn-primary"
       )
-      
+
     } else {
-      
+
       NULL
-      
+
     }
-    
+
   })
- 
-  
-  match_fcs_files <- function(raw_files, method_sources) {
-    
-    if (length(raw_files) == 0)
-      stop("No RAW FCS files found.")
-    
-    if (length(method_sources) == 0)
-      stop("No correction methods found.")
-    
+
+
+
+  match_fcs_files <- function(raw_files, method_files, max_distance = 0.25) {
+
+    raw_files <- as.character(unlist(raw_files, use.names = FALSE))
+
+    if (length(raw_files) == 0) {
+      warning("Aucun fichier RAW détecté.")
+      return(data.frame(raw_file = character()))
+    }
+
+    if (is.null(names(method_files)) || any(names(method_files) == "")) {
+      stop("method_files doit être une liste nommée avec les suffixes des méthodes.")
+    }
+
+    normalize_name <- function(x) {
+      x <- basename(x)
+      x <- tools::file_path_sans_ext(x)
+      x <- tolower(x)
+      x <- sub("^norm_", "", x)
+      x <- gsub("[^a-z0-9]", "", x)
+      x
+    }
+
+    raw_names <- vapply(raw_files, normalize_name, character(1))
+
+    cat("\n")
+    cat("========================================\n")
+    cat("        DEBUT DU MATCHING FCS\n")
+    cat("========================================\n")
+    cat("Nombre de fichiers RAW :", length(raw_files), "\n\n")
+
+    cat("Fichiers RAW détectés :\n")
+    for (i in seq_along(raw_files)) {
+      cat(sprintf("  RAW %02d : %s\n", i, basename(raw_files[i])))
+    }
+
     results <- data.frame(
       raw_file = raw_files,
       stringsAsFactors = FALSE
     )
-    
-    # Collect all files for each method
-    candidates <- list()
-    
-    for (method_name in names(method_sources)) {
-      
-      source <- method_sources[[method_name]]
-      
-      if (length(source) == 1 && dir.exists(source)) {
-        
+
+    for (method_name in names(method_files)) {
+
+      cat("\n")
+      cat("----------------------------------------\n")
+      cat("METHODE :", method_name, "\n")
+      cat("----------------------------------------\n")
+
+      source <- method_files[[method_name]]
+
+      # Mode local : source = dossier contenant les FCS
+      if (length(source) == 1 &&
+          !is.na(source) &&
+          nzchar(source) &&
+          dir.exists(source)) {
+
         files <- list.files(
           source,
           pattern = "\\.fcs$",
           full.names = TRUE,
           ignore.case = TRUE
         )
-        
+
       } else {
-        
-        files <- source[file.exists(source)]
-        
+        # Mode upload : source = chemins des fichiers copiés
+        files <- as.character(unlist(source, use.names = FALSE))
         files <- files[
-          grepl("\\.fcs$", files, ignore.case = TRUE)
+          !is.na(files) &
+            nzchar(files) &
+            file.exists(files)
         ]
-        
       }
-      
-      candidates[[method_name]] <- unique(files)
-      
-      results[[method_name]] <- rep(
-        NA_character_,
-        length(raw_files)
-      )
-      
-    }
-    
-    # Track already assigned files independently for each method
-    used_files <- lapply(
-      candidates,
-      function(x) character()
-    )
-    
-    # Process EVERY RAW file, including RAW 1
-    for (i in seq_along(raw_files)) {
-      
-      raw_file <- raw_files[i]
-      
-      raw_name <- tools::file_path_sans_ext(
-        basename(raw_file)
-      )
-      
-      # Read RAW once
-      raw_fcs <- tryCatch(
-        flowCore::read.FCS(
-          raw_file,
-          transformation = FALSE,
-          truncate_max_range = FALSE
-        ),
-        error = function(e) NULL
-      )
-      
-      if (is.null(raw_fcs)) {
-        warning("Unable to read RAW: ", basename(raw_file))
+
+      results[[method_name]] <- rep(NA_character_, length(raw_files))
+
+      if (length(files) == 0) {
+        cat("Aucun fichier FCS trouvé pour cette méthode.\n")
         next
       }
-      
-      raw_cells <- nrow(flowCore::exprs(raw_fcs))
-      
-      # Search separately in EVERY method
-      for (method_name in names(candidates)) {
-        
-        method_files <- candidates[[method_name]]
-        
-        # Exclude files already assigned to another RAW
-        available <- setdiff(
-          method_files,
-          used_files[[method_name]]
-        )
-        
-        if (length(available) == 0)
-          next
-        
-        method_names <- tools::file_path_sans_ext(
-          basename(available)
-        )
-        
-        # ----------------------------------
-        # STEP 1: Filename similarity
-        # ----------------------------------
-        
-        scores <- stringdist::stringdist(
-          raw_name,
-          method_names,
-          method = "jw"
-        )
-        
-        best <- which.min(scores)
-        
-        selected_file <- NULL
-        
-        if (
-          length(best) > 0 &&
-          is.finite(scores[best]) &&
-          scores[best] < 0.25
-        ) {
-          
-          selected_file <- available[best]
-          
-        }
-        
-        # ----------------------------------
-        # STEP 2: Fallback using cell count
-        # ----------------------------------
-        
-        if (is.null(selected_file)) {
-          
-          cell_diff <- vapply(
-            available,
-            function(f) {
-              
-              fcs <- tryCatch(
-                flowCore::read.FCS(
-                  f,
-                  transformation = FALSE,
-                  truncate_max_range = FALSE
-                ),
-                error = function(e) NULL
-              )
-              
-              if (is.null(fcs))
-                return(Inf)
-              
-              abs(
-                nrow(flowCore::exprs(fcs)) - raw_cells
-              )
-              
-            },
-            numeric(1)
-          )
-          
-          if (any(is.finite(cell_diff))) {
-            
-            best <- which.min(cell_diff)
-            
-            selected_file <- available[best]
-            
-          }
-          
-        }
-        
-        # ----------------------------------
-        # STEP 3: Assign match
-        # ----------------------------------
-        
-        if (!is.null(selected_file)) {
-          
-          results[i, method_name] <- selected_file
-          
-          used_files[[method_name]] <- c(
-            used_files[[method_name]],
-            selected_file
-          )
-          
-          message(
-            "RAW: ", basename(raw_file),
-            " | Method: ", method_name,
-            " | Match: ", basename(selected_file)
-          )
-          
-        } else {
-          
-          warning(
-            "No match found for RAW ",
-            basename(raw_file),
-            " in method ",
-            method_name
-          )
-          
-        }
-        
+
+      cat("Nombre de fichiers méthode :", length(files), "\n")
+      cat("Fichiers méthode détectés :\n")
+
+      for (j in seq_along(files)) {
+        cat(sprintf("  FCS %02d : %s\n", j, basename(files[j])))
       }
-      
+
+      method_names <- vapply(files, normalize_name, character(1))
+
+      # Calcul des distances Jaro-Winkler
+      distance_matrix <- stringdist::stringdistmatrix(
+        raw_names,
+        method_names,
+        method = "jw"
+      )
+
+      n_raw <- nrow(distance_matrix)
+      n_method <- ncol(distance_matrix)
+
+      # Colonnes fictives permettant de laisser un RAW sans correspondance
+      dummy_cost <- max_distance + 0.000001
+
+      cost_matrix <- cbind(
+        distance_matrix,
+        matrix(dummy_cost, nrow = n_raw, ncol = n_raw)
+      )
+
+      # Les distances supérieures au seuil sont interdites
+      cost_matrix[, seq_len(n_method)] <- ifelse(
+        distance_matrix <= max_distance,
+        distance_matrix,
+        1000
+      )
+
+      # Affectation globale optimale, sans réutiliser un fichier méthode
+      assignment <- as.integer(clue::solve_LSAP(cost_matrix))
+
+      cat("\nRésultats du matching :\n")
+
+      for (i in seq_len(n_raw)) {
+
+        j <- assignment[i]
+
+        if (j > n_method) {
+          cat(sprintf(
+            "  NON MATCHÉ : RAW %-35s | aucun candidat sous le seuil %.3f\n",
+            basename(raw_files[i]),
+            max_distance
+          ))
+          next
+        }
+
+        distance <- distance_matrix[i, j]
+
+        if (distance <= max_distance) {
+
+          results[[method_name]][i] <- files[j]
+
+          cat(sprintf(
+            "  MATCH : RAW %-35s -> FCS %-35s | distance = %.4f\n",
+            basename(raw_files[i]),
+            basename(files[j]),
+            distance
+          ))
+
+        } else {
+
+          cat(sprintf(
+            "  NON MATCHÉ : RAW %-35s | meilleur candidat : %-35s | distance = %.4f\n",
+            basename(raw_files[i]),
+            basename(files[j]),
+            distance
+          ))
+        }
+      }
+
+      cat("\nBilan méthode ", method_name, " : ",
+          sum(!is.na(results[[method_name]])), " / ",
+          length(raw_files), " RAW appariés\n",
+          sep = "")
     }
-    
+
+    cat("\n")
+    cat("========================================\n")
+    cat("          BILAN GLOBAL\n")
+    cat("========================================\n")
+
+    for (method_name in names(method_files)) {
+      cat(
+        method_name, " : ",
+        sum(!is.na(results[[method_name]])),
+        " / ", length(raw_files),
+        " correspondances\n",
+        sep = ""
+      )
+    }
+
+    cat("========================================\n")
+    cat("          FIN DU MATCHING FCS\n")
+    cat("========================================\n\n")
+
+    rownames(results) <- NULL
+
     return(results)
-    
   }
-  
+
+
+
   output$validate_parameters_button <- renderUI({
-    
+
 
     if(!isTRUE(matching_validated()) || is.null(parameter_table_rv())){
-      
+
       return(
         fluidRow(
-          
+
           column(
             12,
-            
+
             box(
               width = 12,
               title = "Parameters selection",
               status = "warning",
               solidHeader = TRUE,
-              
+
               h3(
                 icon("exclamation-triangle"),
                 " Please upload files first"
               ),
-              
+
               p(
                 "Go to the Upload FCS tab, select a RAW folder and add at least one process before choosing parameters."
               )
-              
+
             )
-            
+
           )
-          
+
         )
       )
-      
+
     }
-    
-    
+
+
     tagList(
-      
+
       p(
         "Select parameters that will be added to RAW FCS files."
       ),
-      
-      
+
+
       DTOutput(
         "parameter_table"
       ),
-      
-      
+
+
       br(),
-      
-      
+
+
       actionButton(
         "use_parameters",
         "Validate selected parameters",
         icon = icon("check"),
         class = "btn-primary"
       )
-      
+
     )
-    
+
   })
   output$merge_button_ui <- renderUI({
-    
+
     req(parameters_validated())
     req(matching_validated())
-    
+
     fluidRow(
-      
+
       column(
         12,
-        
+
         box(
           width = 12,
           title = "",
           status = "success",
           solidHeader = TRUE,
-          
+
           div(
             style="
           text-align:center;
           padding:20px;
           ",
-            
+
             h3(
               icon("circle-check"),
               " Ready to merge"
             ),
-            
+
             p(
               "All selected parameters and files are validated."
             ),
-            
+
             br(),
-            
+
             actionButton(
               "run_merge",
               "Run FCS merge",
               icon = icon("play"),
               class = "btn-success btn-lg"
             )
-            
+
           )
-          
+
         )
-        
+
       )
-      
+
     )
-    
+
   })
   get_fcs_parameters <- function(file) {
-    
+
     if (
       is.null(file) ||
       length(file) != 1 ||
@@ -1039,11 +1029,11 @@ server <- function(input, output, session){
         )
       )
     }
-    
+
     fcs <- read_fcs_with_compensation(file)
-    
+
     data <- fcs@parameters@data
-    
+
     data.frame(
       name = data$name,
       desc = data$desc,
@@ -1051,25 +1041,25 @@ server <- function(input, output, session){
     )
   }
   observeEvent(input$check_files, {
-    
+
     tryCatch({
-      
+
       raw_file_list <- raw_files()
       dat <- methods()
-      
+
       req(length(raw_file_list) > 0)
       req(nrow(dat) > 0)
-      
-    
+
+
       for (i in dat$id) {
         value <- input[[paste0("suffix_", i)]]
-        
+
         if (!is.null(value)) {
           dat$suffix[dat$id == i] <- value
         }
       }
-      
-  
+
+
       validate(
         need(
           all(nzchar(trimws(dat$suffix))),
@@ -1080,65 +1070,65 @@ server <- function(input, output, session){
           "Each process must have a unique suffix."
         )
       )
-      
+
       methods(dat)
-      
-     
+
+
       method_paths <- get_method_sources()
-      
- 
+
+
       names(method_paths) <- dat$suffix
 
       matching <- match_fcs_files(
         raw_file_list,
         method_paths
       )
-  
+
       if (identical(app_mode, "upload")) {
-        
+
         raw_names <- input$raw_files$name[
           match(matching$raw_file, input$raw_files$datapath)
         ]
-        
+
       } else {
-        
+
         raw_names <- basename(matching$raw_file)
-        
+
       }
-      
+
       raw_names_rv(raw_names)
       matching_rv(matching)
       matching_validated(TRUE)
-      
+
 
       raw_file <- matching$raw_file[1]
-      
+
       param_list <- list()
       param_list$RAW <- get_fcs_parameters(raw_file)
-      
+
 
    for (col in names(matching)[-1]) {
-        
+
         method_file <- matching[[col]][1]
-        
+
         if (!is.na(method_file)) {
-          
+
           param_list[[col]] <-
             get_fcs_parameters(method_file)
-          
+
         }
       }
-      
-      
- 
+
+
+
       common_names <- Reduce(
         intersect,
         lapply(param_list, function(x) x$name)
       )
-      
-      
+
+
       raw_parameters <- param_list$RAW
-      
+
       parameter_table <- data.frame(
         name = common_names,
         desc = raw_parameters$desc[
@@ -1146,21 +1136,21 @@ server <- function(input, output, session){
         ],
         stringsAsFactors = FALSE
       )
-      
+
 
       for (n in names(param_list)) {
-        
+
         tmp <- param_list[[n]]
-        
+
         parameter_table[[paste0("desc_", n)]] <-
           tmp$desc[match(common_names, tmp$name)]
       }
-      
+
       parameter_table_rv(parameter_table)
-      
+
       merge_summary(NULL)
       parameters_validated(FALSE)
-      
+
       showNotification(
         paste(
           nrow(matching),
@@ -1170,28 +1160,28 @@ server <- function(input, output, session){
         ),
         type = "message"
       )
-      
+
     }, error = function(e) {
-      
+
       matching_rv(NULL)
       matching_validated(FALSE)
       parameter_table_rv(NULL)
-      
+
       showNotification(
         paste("File validation failed:", conditionMessage(e)),
         type = "error",
         duration = NULL
       )
-      
+
     })
-    
+
   })
   output$parameter_table <- renderDT({
-    
+
     dat <- parameter_table_rv()
-    
+
     req(dat)
-    
+
     dat$Keep <- paste0(
       '<input type="checkbox" class="param_check" value="',
       dat$name,
@@ -1205,24 +1195,24 @@ server <- function(input, output, session){
       ),
       '>'
     )
-    
-    
+
+
     # mettre Keep en premi??re colonne
     dat <- dat[, c(
       "Keep",
       setdiff(names(dat), "Keep")
     )]
-    
-    
+
+
     datatable(
       dat,
       escape = FALSE,
-      
+
       selection = "none",
       rownames = FALSE,
-      
+
       callback = DT::JS("
-      
+
     var selected = [];
 
 $('.param_check:checked').each(function(){
@@ -1235,7 +1225,7 @@ Shiny.setInputValue(
     {priority:'event'}
 );
 
-      
+
 
 
       table.on('draw.dt',function(){
@@ -1309,47 +1299,47 @@ Shiny.setInputValue(
       });
 
     "),
-      
-      
+
+
       options = list(
-        
+
         paging = FALSE,
-        
+
 
         scrollX = TRUE,
-        
+
         scrollCollapse = TRUE,
-        
+
         autoWidth = FALSE,
-        
+
         searching = TRUE,
-        
+
         lengthChange = FALSE,
-        
+
         dom = 'ft',
-        
-        
+
+
         columnDefs = c(
-          
+
           list(
             list(
               targets = 0,
               width = "35px",
               className = "dt-center"
             ),
-            
+
             list(
               targets = 1,
               width = "110px"
             ),
-            
+
             list(
               targets = 2,
               width = "120px"
             )
           ),
-          
-          
+
+
           if(ncol(dat) > 3)
             list(
               list(
@@ -1359,66 +1349,66 @@ Shiny.setInputValue(
             )
           else
             list()
-          
+
         )
-        
+
       ),
-      
-      
+
+
       class = "compact stripe hover",
-      
+
       width = "50%"
-      
+
     )
-    
-    
+
+
   }, server = FALSE)
   observeEvent(input$use_parameters, {
-    
+
     params <- input$checked_parameters
-    
+
     if(is.null(params)){
       params <- character(0)
     }
-    
+
     if(length(params)==0){
-      
+
       showNotification(
         "No parameter selected",
         type="error"
       )
-      
+
       parameters_validated(FALSE)
       merge_summary(NULL)
-      
+
       return()
-      
+
     }
-    
-    
+
+
     selected_parameters_rv(unique(params))
     parameters_validated(TRUE)
-    
-    
-    dat <- methods()
-    
-    raw_file_list <- raw_files()
-    
 
-    
+
+    dat <- methods()
+
+    raw_file_list <- raw_files()
+
+
+
     parameter_table <- parameter_table_rv()
-    
+
     parameter_labels <- params
-    
+
     if(!is.null(parameter_table)){
-      
+
       idx <- match(
         params,
         parameter_table$name
       )
-      
+
       desc <- parameter_table$desc[idx]
-      
+
       parameter_labels <- ifelse(
         !is.na(desc) &
           nzchar(desc),
@@ -1430,29 +1420,29 @@ Shiny.setInputValue(
         ),
         params
       )
-      
+
     }
-    
-    
+
+
     merge_summary(
       list(
-        
+
         n_methods = nrow(dat),
-        
+
         methods = dat$suffix,
-        
+
         n_files = length(raw_file_list),
-        
+
         n_parameters = length(params),
-        
-  
+
+
         parameters = unique(params),
-        
-   
+
+
         parameter_labels = unique(parameter_labels),
-        
+
         folders = rbind(
-          
+
           data.frame(
             type = "RAW",
             folder = if (identical(app_mode, "local")) {
@@ -1463,7 +1453,7 @@ Shiny.setInputValue(
             suffix = "",
             stringsAsFactors = FALSE
           ),
-          
+
           data.frame(
             type = "Correction",
             folder = if (identical(app_mode, "local")) {
@@ -1474,13 +1464,13 @@ Shiny.setInputValue(
             suffix = dat$suffix,
             stringsAsFactors = FALSE
           )
-          
+
         )
-        
+
       )
     )
-    
-    
+
+
     showNotification(
       paste(
         length(params),
@@ -1488,14 +1478,14 @@ Shiny.setInputValue(
       ),
       type="message"
     )
-    
+
   })
   output$analysis_summary <- renderUI({
-    
+
     s <- merge_summary()
-    
+
     if(!isTRUE(parameters_validated()) || is.null(s)){
-      
+
       return(
         fluidRow(
           column(
@@ -1505,9 +1495,9 @@ Shiny.setInputValue(
               title = "Merge summary",
               status = "warning",
               solidHeader = TRUE,
-              
+
               h4("Parameters not selected"),
-              
+
               p(
                 "Go to the Parameters tab, select markers and validate your selection."
               )
@@ -1515,12 +1505,12 @@ Shiny.setInputValue(
           )
         )
       )
-      
+
     }
-    
-    
+
+
     fluidRow(
-      
+
       column(
         4,
         box(
@@ -1528,20 +1518,20 @@ Shiny.setInputValue(
           title = "Methods",
           status = "primary",
           solidHeader = TRUE,
-          
+
           h2(
             s$n_methods,
             style="text-align:center;"
           ),
-          
+
           p(
             "processing methods",
             style="text-align:center;color:#666;"
           )
         )
       ),
-      
-      
+
+
       column(
         4,
         box(
@@ -1549,20 +1539,20 @@ Shiny.setInputValue(
           title = "RAW files",
           status = "success",
           solidHeader = TRUE,
-          
+
           h2(
             s$n_files,
             style="text-align:center;"
           ),
-          
+
           p(
             "files detected",
             style="text-align:center;color:#666;"
           )
         )
       ),
-      
-      
+
+
       column(
         4,
         box(
@@ -1570,43 +1560,43 @@ Shiny.setInputValue(
           title = "Parameters",
           status = "info",
           solidHeader = TRUE,
-          
+
           h2(
             s$n_parameters,
             style="text-align:center;"
           ),
-          
+
           p(
             "markers selected",
             style="text-align:center;color:#666;"
           )
         )
       )
-      
+
     )
-    
-    
+
+
     fluidRow(
-      
+
       column(
         6,
-        
+
         box(
           width = 12,
           title = "Input folders",
           status = "primary",
           solidHeader = TRUE,
-          
+
           tableOutput("folders_table")
-          
+
         )
-        
+
       ),
-      
-      
+
+
       column(
         6,
-        
+
         box(
           width = 12,
           title = paste0(
@@ -1616,136 +1606,136 @@ Shiny.setInputValue(
           ),
           status = "primary",
           solidHeader = TRUE,
-          
+
           div(
             style="
           max-height:250px;
           overflow-y:auto;
           ",
-            
+
             tags$ul(
               lapply(
                 s$parameter_labels,
                 function(x){
-                  
+
                   tags$li(x)
-                  
+
                 }
               )
             )
-            
+
           )
-          
+
         )
-        
+
       )
-      
+
     )
-    
+
   })
   output$folders_summary <- renderUI({
-    
+
     s <- merge_summary()
-    
+
     req(s$folders)
-    
+
     folders <- s$folders
-    
+
     tableOutput("folders_table")
-    
+
   })
-  
-  
+
+
   output$folders_table <- renderTable({
-    
+
     s <- merge_summary()
-    
+
     req(s$folders)
-    
+
     data.frame(
       Type = ifelse(
         s$folders$type == "RAW",
         "RAW",
         "Method"
       ),
-      
+
       Suffix = ifelse(
         s$folders$type == "RAW",
         "-",
         s$folders$suffix
       ),
-      
+
       Folder = basename(s$folders$folder),
       Parent_path = ifelse(
         grepl("Uploaded", s$folders$folder),
         "-",
         dirname(s$folders$folder)
       ),
-      
+
       stringsAsFactors = FALSE
     )
-    
+
   },
   striped = TRUE,
   bordered = TRUE,
   hover = TRUE)
-  
+
   merge_one_fcs <- function(raw_file,
                             method_files,
                             selected_parameters,
                             output_file){
-    
-    
+
+
     raw_fcs <- read_fcs_with_compensation(raw_file)
-    
+
     for(method_name in names(method_files)){
-      
-      
+
+
       method_file <- method_files[[method_name]]
-      
-      
+
+
       if(is.na(method_file) || !file.exists(method_file))
         next
-      
-      
+
+
       method_fcs <- read.FCS(
         method_file,
         transformation = FALSE,
         truncate_max_range = FALSE
       )
-      
-      
+
+
       method_expr <- exprs(method_fcs)
-      
-      
+
+
       common <- intersect(
         selected_parameters,
         colnames(method_expr)
       )
-      
-      
+
+
       if(length(common) == 0)
         next
-      
-      
-     
+
+
+
       method_params <- method_fcs@parameters@data
-      
-      
+
+
 
       for(marker in common){
-        
-        
+
+
         newcolumn <- method_expr[, marker]
-        
-        
+
+
         new_name <- paste0(
           marker,
           "_",
           method_name
         )
-        
-        
+
+
 
         raw_fcs <- FlowCIPHE::enrich.FCS.CIPHE(
           raw_fcs,
@@ -1754,53 +1744,53 @@ Shiny.setInputValue(
         )
 
         raw_params <- raw_fcs@parameters@data
-        
-        
+
+
         raw_desc <- raw_params$desc[
           match(marker, raw_params$name)
         ]
-        
-        
+
+
         if(is.na(raw_desc) || !nzchar(raw_desc)){
-          
+
           raw_desc <- method_params$desc[
             match(marker, method_params$name)
           ]
-          
+
         }
-        
-        
+
+
         idx <- match(
           new_name,
           raw_params$name
         )
-        
-        
+
+
         if(!is.na(idx)){
-          
+
           if(!is.na(raw_desc) && nzchar(raw_desc)){
-            
+
             raw_fcs@parameters@data$desc[idx] <- raw_desc
-            
+
           } else {
-            
+
             raw_fcs@parameters@data$desc[idx] <- new_name
-            
+
           }
-          
+
         }
-        
+
       }
-      
+
     }
 
-    
+
     current_expr <- exprs(raw_fcs)
-    
+
     new_order <- character()
-    
+
     for(marker in selected_parameters){
-      
+
       # colonne RAW
       if(marker %in% colnames(current_expr)){
         new_order <- c(
@@ -1808,91 +1798,91 @@ Shiny.setInputValue(
           marker
         )
       }
-      
- 
+
+
       added_cols <- grep(
         paste0("^", marker, "_"),
         colnames(current_expr),
         value = TRUE
       )
-      
+
       new_order <- c(
         new_order,
         added_cols
       )
     }
-    
-    
+
+
 
     remaining <- setdiff(
       colnames(current_expr),
       new_order
     )
-    
+
     new_order <- c(
       new_order,
       remaining
     )
-    
-    
+
+
 
     exprs(raw_fcs) <- current_expr[, new_order, drop=FALSE]
-    
+
     write.FCS(
       raw_fcs,
       filename = output_file
     )
-    
+
   }
-  
+
   generate_overlay_plot <- function(raw_file,
                                     method_files,
                                     marker){
-    
+
     all_data <- list()
-    
-    
+
+
     raw <- read_fcs_with_compensation(raw_file)
-    
-    
+
+
     if(marker %in% colnames(exprs(raw))){
-      
+
       all_data[["RAW"]] <-
         log10(exprs(raw)[,marker]+1)
-      
+
     }
-    
-    
+
+
     for(method in names(method_files)){
-      
+
       f <- method_files[[method]]
-      
+
       if(!is.na(f) && file.exists(f)){
-        
+
         fcs <- read_fcs_with_compensation(f)
-        
-        
+
+
         if(marker %in% colnames(exprs(fcs))){
-          
+
           all_data[[method]] <-
             log10(exprs(fcs)[,marker]+1)
-          
+
         }
-        
+
       }
-      
+
     }
-    
-    
+
+
     if(length(all_data)<2)
       return(NULL)
-    
-    
-    
+
+
+
     # ==============================
     # Density avec offset Y
     # ==============================
-    
+
     dens <- lapply(
       all_data,
       function(x){
@@ -1903,42 +1893,42 @@ Shiny.setInputValue(
         )
       }
     )
-    
-    
+
+
     ymax <- max(
       sapply(
         dens,
         function(d) max(d$y)
       )
     )
-    
-    
-    gap <- ymax * 0.25   
-    
-    
+
+
+    gap <- ymax * 0.25
+
+
     plots <- data.frame()
-    
-    
+
+
     for(i in seq_along(dens)){
-      
-      
+
+
       d <- dens[[i]]
-      
+
       tmp <- data.frame(
         x = d$x,
         y = d$y + (i-1)*gap,
         group = names(dens)[i]
       )
-      
+
       plots <- rbind(
         plots,
         tmp
       )
-      
+
     }
-    
-    
-    
+
+
+
     ggplot(
       plots,
       aes(
@@ -1948,20 +1938,20 @@ Shiny.setInputValue(
         fill=group
       )
     )+
-      
+
       geom_area(
         alpha=0.25,
         position="identity"
       )+
-      
+
       geom_line(
         linewidth=1.2
       )+
-      
+
       theme_bw(
         base_size=14
       )+
-      
+
       labs(
         title=paste(
           "Marker:",
@@ -1972,13 +1962,13 @@ Shiny.setInputValue(
         colour="Sample",
         fill="Sample"
       )+
-      
+
       theme(
         legend.position="right",
         legend.text=element_text(size=12),
         legend.title=element_text(size=13)
       )
-    
+
   }
   create_merge_report <- function(
     matching,
@@ -1986,19 +1976,19 @@ Shiny.setInputValue(
     parameters,
     out_dir
   ){
-    
+
     report_file <- file.path(
       out_dir,
       "FCS_Merge_Report.html"
     )
-    
-    
+
+
     html <- c(
-      
+
       "<html>",
       "<head>",
       "<title>FCS Merge Report</title>",
-      
+
       "<style>
     body{
       font-family:Arial;
@@ -2022,72 +2012,72 @@ Shiny.setInputValue(
     }
 
     </style>",
-      
+
       "</head>",
       "<body>",
-      
-      
+
+
       "<h1>FCS Merge Report</h1>",
-      
-      
+
+
       "<div class='box'>",
-      
+
       paste0(
         "<h2>Merge summary</h2>",
         "<p><b>Number of RAW files merged:</b> ",
         nrow(matching),
         "</p>",
-        
+
         "<p><b>Correction methods:</b><br>",
         paste(methods, collapse=", "),
         "</p>",
-        
-        
+
+
         "<p><b>Parameters merged:</b><br>",
         paste(parameters, collapse=", "),
         "</p>"
-        
+
       ),
-      
+
       "</div>",
-      
-      
+
+
       "<h2>Overlay density plots</h2>"
-      
+
     )
-    
-    
+
+
     for(i in seq_len(nrow(matching))){
-      
-      
+
+
       raw_file <- matching$raw_file[i]
-      
-      
+
+
       method_files <- list()
-      
-      
+
+
       for (m in names(matching)[-1]) {
         method_files[[m]] <- matching[[m]][i]
       }
-      
+
       for(marker in parameters){
-        
-        
+
+
         p <- generate_overlay_plot(
           raw_file,
           method_files,
           marker
         )
-        
-        
+
+
         if(!is.null(p)){
-          
-          
+
+
           png_file <- tempfile(
             fileext=".png"
           )
-          
-          
+
+
           ggsave(
             png_file,
             p,
@@ -2095,71 +2085,71 @@ Shiny.setInputValue(
             height=7,
             dpi=150
           )
-          
-          
+
+
           img <- base64enc::dataURI(
             file=png_file,
             mime="image/png"
           )
-          
-          
+
+
           html <- c(
             html,
-            
+
             paste0(
               "<h3>",
               basename(raw_file),
               " - ",
               marker,
               "</h3>",
-              
+
               "<img src='",
               img,
               "'>"
             )
           )
-          
-          
+
+
         }
-        
+
       }
-      
+
     }
 
-    
+
     html <- c(
       html,
       "</body>",
       "</html>"
     )
-    
-    
+
+
     writeLines(
       html,
       report_file
     )
-    
-    
+
+
     report_file
-    
+
   }
   observeEvent(input$run_merge,{
-    
+
     merge_finished(FALSE)
-    
+
     matching <- matching_rv()
     params <- selected_parameters_rv()
-    
-    
+
+
     req(matching)
     req(params)
-    
-    
+
+
     out_dir <- file.path(
       dirname(matching$raw_file[1]),
       "Merged_FCS"
     )
-    
+
     if (!dir.exists(out_dir)) {
       dir.create(
         out_dir,
@@ -2167,39 +2157,39 @@ Shiny.setInputValue(
         showWarnings = FALSE
       )
     }
-    
+
     if (!dir.exists(out_dir)) {
       stop("Unable to create the output directory.")
     }
-    
-    
+
+
     withProgress(
-      
+
       message="Merging FCS files...",
       value=0,
-      
+
       {
-    
+
         n <- nrow(matching)
-        
-        
+
+
         for(i in seq_len(n)){
-          
-          
+
+
           raw_file <- matching$raw_file[i]
-          
-          
+
+
           method_files <- list()
-          
-          
+
+
           for(method in names(matching)[-1]){
-            
+
             method_files[[method]] <-
               matching[[method]][i]
-            
+
           }
-          
-          
+
+
           output_file <- file.path(
             out_dir,
             paste0(
@@ -2209,21 +2199,21 @@ Shiny.setInputValue(
               "_Merged.fcs"
             )
           )
-          
+
           merge_one_fcs(
             raw_file,
             method_files,
             params,
             output_file
           )
-          
-          
+
+
           incProgress(
             1/n
           )
-          
+
         }
-        
+
       }
     )
     files <- list.files(
@@ -2238,133 +2228,133 @@ Shiny.setInputValue(
       choices = files,
       selected = files[1]
     )
-    
-   
+
+
     output$merge_status <- renderText({
-      
+
       paste(
         "Merge completed successfully.",
         "\nOutput directory:",
         out_dir
       )
-      
+
     })
     merge_finished(TRUE)
-    
+
   })
   # ==================================================
   # VISUALIZATION MERGED FCS
   # ==================================================
-  
+
   viz_dir <- reactive({
-    
+
     matching <- matching_rv()
-    
+
     req(matching)
-    
+
     file.path(
       dirname(matching$raw_file[1]),
       "Merged_FCS"
     )
-    
+
   })
-  
+
 
 
   observe({
-    
+
     req(dir.exists(viz_dir()))
-    
+
     files <- list.files(
       viz_dir(),
       pattern="\\.fcs$",
       full.names=FALSE
     )
-    
+
     updateSelectInput(
       session,
       "viz_fcs",
       choices = files
     )
-    
+
   })
   output$download_fcs_ui <- renderUI({
-    
- 
+
+
     req(isTRUE(merge_finished()))
-    
+
     downloadButton(
       "download_fcs",
       "Download merged FCS files (.zip)",
       icon = icon("download"),
       class = "btn-success"
     )
-    
+
   })
   output$merge_report_ui <- renderUI({
-    
 
-    
+
+
     fluidRow(
-      
+
       column(
-        
+
         12,
-        
+
         box(
-          
+
           width = 12,
-          
+
           title = "Merge report",
           status = "info",
           solidHeader = TRUE,
-          
+
         ),
-        
-        
+
+
         downloadButton(
           "download_report",
           "Generate FCS Merge Report",
           icon = icon("download"),
           class = "btn-primary"
         )      )
-      
-    ) 
-    
+
+    )
+
   })
-  
+
 
   output$viz_parameters <- renderUI({
-    
+
     req(input$viz_fcs)
-    
+
     f <- file.path(
       viz_dir(),
       input$viz_fcs
     )
-    
+
     fcs <- read_fcs_with_compensation(f)
-    
+
     params <- colnames(exprs(fcs))
-    
+
     p_data <- fcs@parameters@data
-    
+
     labels <- sapply(params, function(x){
-      
+
       idx <- match(x, p_data$name)
-      
+
       desc <- p_data$desc[idx]
-      
+
       if(!is.na(desc) && nzchar(desc)){
         paste0(x, " (", desc, ")")
       } else {
         x
       }
-      
+
     })
-    
+
   names(labels) <- params
-    
+
     choices <- setNames(
       object = params,
       nm = ifelse(
@@ -2392,36 +2382,36 @@ Shiny.setInputValue(
       },
       multiple = TRUE
     )
-    
+
   })
-  
-  
+
+
   observeEvent(input$viz_markers, {
     viz_markers_rv(input$viz_markers)
   }, ignoreInit = TRUE)
 
   output$density_axes <- renderUI({
-    
+
     req(input$viz_fcs)
     req(dir.exists(viz_dir()))
-    
+
     f <- file.path(viz_dir(), input$viz_fcs)
-    
+
     validate(
       need(file.exists(f), "Merged FCS file not found.")
     )
-    
+
     fcs <- read_fcs_with_compensation(f)
-    
+
     params <- colnames(flowCore::exprs(fcs))
-    
+
     validate(
       need(length(params) >= 2, "At least two channels are required.")
     )
-    
+
     names(params) <- NULL
-    
-    
+
+
     tagList(
       selectInput(
         "marker_x",
@@ -2436,7 +2426,7 @@ Shiny.setInputValue(
           }
         }
       ),
-      
+
       selectInput(
         "marker_y",
         "Marker Y",
@@ -2455,39 +2445,39 @@ Shiny.setInputValue(
   observeEvent(input$marker_x, {
     marker_x_rv(input$marker_x)
   }, ignoreInit = TRUE)
-  
+
   observeEvent(input$marker_y, {
     marker_y_rv(input$marker_y)
   }, ignoreInit = TRUE)
- 
+
   # ==================================================
   # PLOT DENSITY AVEC densCols()
   # ==================================================
-  
+
   output$plot_dens <- renderPlot({
-    
+
     req(
       input$viz_fcs,
       input$marker_x,
       input$marker_y
     )
-    
+
     validate(
       need(
         input$marker_x != input$marker_y,
         "Please select two different markers."
       )
     )
-    
+
     f <- file.path(viz_dir(), input$viz_fcs)
-    
+
     validate(
       need(file.exists(f), "Merged FCS file not found.")
     )
-    
+
     fcs <- read_fcs_with_compensation(f)
     channels <- c(input$marker_x, input$marker_y)
-    
+
     validate(
       need(
         all(channels %in% colnames(flowCore::exprs(fcs))),
@@ -2495,30 +2485,30 @@ Shiny.setInputValue(
       )
     )
   dat <- flowCore::exprs(fcs)[, channels, drop = FALSE]
-    
+
     valid <- apply(
       dat,
       1,
       function(z) all(is.finite(z))
     )
-    
+
     validate(
       need(sum(valid) >= 20, "Not enough valid events to plot.")
     )
-    
+
     x_vals <- dat[valid, 1]
     y_vals <- dat[valid, 2]
-    
+
     # --------------------------------
     # Arcsinh transformation
     # --------------------------------
-    
+
     cofactor <- 150
-    
+
     if (isTRUE(input$apply_arcsinh)) {
-      
+
       cofactor <- input$arcsinh_cofactor
-      
+
       validate(
         need(
           length(cofactor) == 1 &&
@@ -2527,21 +2517,21 @@ Shiny.setInputValue(
           "The arcsinh cofactor must be positive."
         )
       )
-      
+
       x_vals <- asinh(x_vals / cofactor)
       y_vals <- asinh(y_vals / cofactor)
-      
+
     }
-    
+
     # --------------------------------
     # Axis limits
     # --------------------------------
-    
+
     x_min <- input$xlim_min
     x_max <- input$xlim_max
     y_min <- input$ylim_min
     y_max <- input$ylim_max
-    
+
     validate(
       need(
         all(is.finite(c(x_min, x_max, y_min, y_max))),
@@ -2552,21 +2542,21 @@ Shiny.setInputValue(
         "Axis minimum must be smaller than axis maximum."
       )
     )
-    
+
     if (isTRUE(input$apply_arcsinh)) {
-      
+
       plot_xlim <- asinh(c(x_min, x_max) / cofactor)
       plot_ylim <- asinh(c(y_min, y_max) / cofactor)
-      
+
     } else {
-      
+
       plot_xlim <- c(x_min, x_max)
       plot_ylim <- c(y_min, y_max)
-      
+
     }
-  
+
     if (input$density){
-      
+
       cols <- grDevices::densCols(
         x_vals,
         y_vals,
@@ -2588,28 +2578,28 @@ Shiny.setInputValue(
     # --------------------------------
     # Scatter plot avec densité
     # --------------------------------
-    
+
     plot(
       x_vals,
       y_vals,
       pch = 16,
       cex = 0.5,
       col = cols,
-      
+
       xlab = input$marker_x,
       ylab = input$marker_y,
-      
+
       main = paste("Marker :", input$marker_x, "\n",
                    input$marker_x, "vs", input$marker_y),
-      
+
       xlim = plot_xlim,
       ylim = plot_ylim
     )
-    
+
     # --------------------------------
     # Ligne diagonale de référence Y = X
     # --------------------------------
-    
+
     abline(
       a = 0,
       b = 1,
@@ -2619,31 +2609,31 @@ Shiny.setInputValue(
     )
 
   }, res = 96)
-  
-  
+
+
   output$overlay_hist <- renderPlot({
-    
+
     req(
       input$viz_fcs,
       input$viz_markers
     )
-    
+
     f <- file.path(
       viz_dir(),
       input$viz_fcs
     )
-    
+
     fcs <- read_fcs_with_compensation(f)
-    
+
     dat <- as.data.frame(exprs(fcs))
-    
+
     markers <- input$viz_markers
-    
+
     # Arcsinh cofactor validation
     if (isTRUE(input$apply_arcsinh)) {
-      
+
       cofactor <- input$arcsinh_cofactor
-      
+
       validate(
         need(
           length(cofactor) == 1 &&
@@ -2653,43 +2643,43 @@ Shiny.setInputValue(
         )
       )
     }
-    
+
     # Transform marker intensities
     values <- lapply(
       markers,
       function(m) {
-        
+
         if (!m %in% colnames(dat))
           return(NULL)
-        
+
         x <- dat[[m]]
-        
+
         x <- x[is.finite(x)]
-        
+
         if (length(x) < 10)
           return(NULL)
-        
+
         if (isTRUE(input$apply_arcsinh)) {
-          
+
           # Arcsinh transformation
           asinh(x / cofactor)
-          
+
         } else {
-          
+
           # Original log10 transformation
           log10(x + 1)
-          
+
         }
       }
     )
     keep <- !sapply(values, is.null)
-    
+
     values <- values[keep]
-    
+
     markers <- markers[keep]
-    
+
     req(length(values) > 0)
-    
+
     # Density estimation
     dens <- lapply(
       values,
@@ -2701,28 +2691,28 @@ Shiny.setInputValue(
         )
       }
     )
-    
+
     names(dens) <- markers
-    
+
     xlim <- range(
       unlist(lapply(dens, function(d) d$x)),
       finite = TRUE
     )
-    
+
     ymax <- max(
       sapply(
         dens,
         function(d) max(d$y)
       )
     )
-    
+
     offset <- ymax * 0.15
-    
+
     cols <- rainbow(
       length(dens),
       alpha = 0.35
     )
-    
+
     plot(
       dens[[1]]$x,
       dens[[1]]$y,
@@ -2740,11 +2730,11 @@ Shiny.setInputValue(
       },
       ylab = "Density"
     )
-    
+
     for (i in seq_along(dens)) {
-      
+
       yshift <- (i - 1) * offset
-      
+
       polygon(
         c(
           dens[[i]]$x,
@@ -2760,7 +2750,7 @@ Shiny.setInputValue(
         col = cols[i],
         border = NA
       )
-      
+
       lines(
         dens[[i]]$x,
         dens[[i]]$y + yshift,
@@ -2768,7 +2758,7 @@ Shiny.setInputValue(
         lwd = 2
       )
     }
-    
+
     legend(
       "topright",
       legend = markers,
@@ -2780,111 +2770,111 @@ Shiny.setInputValue(
       bty = "n",
       inset = 0.02
     )
-    
+
   }, width = 700, height = 700)
-  
+
     output$download_report <- downloadHandler(
-      
+
       filename = function(){
-        
+
         print("DOWNLOAD START")
-        
+
         paste0(
           "FCS_Merge_Report_",
           Sys.Date(),
           ".html"
         )
-        
+
       },
-      
-      
+
+
       content = function(file){
-        
+
         print("CREATING REPORT")
-        
+
         matching <- matching_rv()
         params <- selected_parameters_rv()
-        
+
         print(matching)
         print(params)
-        
+
         req(matching)
         req(params)
-        
-        
+
+
         out_dir <- file.path(
           dirname(matching$raw_file[1]),
           "Merged_FCS"
         )
-        
-        
+
+
         report <- create_merge_report(
           matching = matching,
           methods = names(matching)[-1],
           parameters = params,
           out_dir = out_dir
         )
-        
-        
+
+
         print(report)
-        
-        
+
+
         file.copy(
           report,
           file,
           overwrite=TRUE
         )
-        
+
         print("REPORT SENT")
-        
+
       }
     )
- 
-    
+
+
     output$download_fcs <- downloadHandler(
-      
+
       filename = function() {
         paste0("FCS_Merge_", Sys.Date(), ".zip")
       },
-      
+
       contentType = "application/zip",
-      
+
       content = function(file) {
-        
+
         out_dir <- viz_dir()
-        
+
         if (is.null(out_dir) || !dir.exists(out_dir)) {
           stop("The Merged_FCS directory does not exist.")
         }
-        
+
         fcs_files <- list.files(
           out_dir,
           pattern = "\\.fcs$",
           full.names = TRUE,
           ignore.case = TRUE
         )
-        
+
         if (length(fcs_files) == 0) {
           stop("No merged FCS files found.")
         }
-        
+
         # Create ZIP archive
         zip::zipr(
           zipfile = file,
           files = basename(fcs_files),
           root = out_dir
         )
-        
+
         if (!file.exists(file) || file.info(file)$size == 0) {
           stop("ZIP archive creation failed.")
         }
-        
+
       }
     )
-    
- 
-   
-    
+
+
+
+
 }
 
 
