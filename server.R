@@ -10,12 +10,10 @@ library(tidyr)
 library(shinyjs)
 library(flowCore)
 
-
 server <- function(input, output, session){
   
 
-  
-  
+
   read_fcs_with_compensation <- function(file) {
     
     # Lire le fichier FCS sans compensation automatique
@@ -714,22 +712,21 @@ server <- function(input, output, session){
     
   })
  
-    match_fcs_files <- function(raw_files, method_sources) {
+  
+  match_fcs_files <- function(raw_files, method_sources) {
     
     if (length(raw_files) == 0)
       stop("No RAW FCS files found.")
+    
+    if (length(method_sources) == 0)
+      stop("No correction methods found.")
     
     results <- data.frame(
       raw_file = raw_files,
       stringsAsFactors = FALSE
     )
     
-    # Une colonne par méthode, mais un seul match autorisé par RAW
-    for (method_name in names(method_sources)) {
-      results[[method_name]] <- NA_character_
-    }
-    
-    # Récupération de tous les fichiers Method
+    # Collect all files for each method
     candidates <- list()
     
     for (method_name in names(method_sources)) {
@@ -752,65 +749,100 @@ server <- function(input, output, session){
         files <- files[
           grepl("\\.fcs$", files, ignore.case = TRUE)
         ]
+        
       }
       
-      if (length(files) > 0) {
-        
-        candidates[[method_name]] <- data.frame(
-          file = files,
-          method = method_name,
-          stringsAsFactors = FALSE
-        )
-      }
+      candidates[[method_name]] <- unique(files)
+      
+      results[[method_name]] <- rep(
+        NA_character_,
+        length(raw_files)
+      )
+      
     }
     
-    candidates <- do.call(rbind, candidates)
-    
-    if (is.null(candidates) || nrow(candidates) == 0)
-      return(results)
-    
-    method_names <- tools::file_path_sans_ext(
-      basename(candidates$file)
+    # Track already assigned files independently for each method
+    used_files <- lapply(
+      candidates,
+      function(x) character()
     )
     
+    # Process EVERY RAW file, including RAW 1
     for (i in seq_along(raw_files)) {
       
+      raw_file <- raw_files[i]
+      
       raw_name <- tools::file_path_sans_ext(
-        basename(raw_files[i])
+        basename(raw_file)
       )
       
-      # Comparaison avec TOUS les fichiers Method
-      scores <- stringdist::stringdist(
-        raw_name,
-        method_names,
-        method = "jw"
+      # Read RAW once
+      raw_fcs <- tryCatch(
+        flowCore::read.FCS(
+          raw_file,
+          transformation = FALSE,
+          truncate_max_range = FALSE
+        ),
+        error = function(e) NULL
       )
       
-      best <- which.min(scores)
+      if (is.null(raw_fcs)) {
+        warning("Unable to read RAW: ", basename(raw_file))
+        next
+      }
       
-      if (is.finite(scores[best]) && scores[best] < 0.25) {
+      raw_cells <- nrow(flowCore::exprs(raw_fcs))
+      
+      # Search separately in EVERY method
+      for (method_name in names(candidates)) {
         
-        results[i, candidates$method[best]] <-
-          candidates$file[best]
+        method_files <- candidates[[method_name]]
         
-      } else {
-        
-        # Fallback : comparaison du nombre de cellules
-        raw_fcs <- tryCatch(
-          flowCore::read.FCS(
-            raw_files[i],
-            transformation = FALSE,
-            truncate_max_range = FALSE
-          ),
-          error = function(e) NULL
+        # Exclude files already assigned to another RAW
+        available <- setdiff(
+          method_files,
+          used_files[[method_name]]
         )
         
-        if (!is.null(raw_fcs)) {
+        if (length(available) == 0)
+          next
+        
+        method_names <- tools::file_path_sans_ext(
+          basename(available)
+        )
+        
+        # ----------------------------------
+        # STEP 1: Filename similarity
+        # ----------------------------------
+        
+        scores <- stringdist::stringdist(
+          raw_name,
+          method_names,
+          method = "jw"
+        )
+        
+        best <- which.min(scores)
+        
+        selected_file <- NULL
+        
+        if (
+          length(best) > 0 &&
+          is.finite(scores[best]) &&
+          scores[best] < 0.25
+        ) {
           
-          raw_cells <- nrow(flowCore::exprs(raw_fcs))
+          selected_file <- available[best]
+          
+        }
+        
+        # ----------------------------------
+        # STEP 2: Fallback using cell count
+        # ----------------------------------
+        
+        if (is.null(selected_file)) {
           
           cell_diff <- vapply(
-            candidates$file,
+            available,
             function(f) {
               
               fcs <- tryCatch(
@@ -828,6 +860,7 @@ server <- function(input, output, session){
               abs(
                 nrow(flowCore::exprs(fcs)) - raw_cells
               )
+              
             },
             numeric(1)
           )
@@ -836,15 +869,50 @@ server <- function(input, output, session){
             
             best <- which.min(cell_diff)
             
-            results[i, candidates$method[best]] <-
-              candidates$file[best]
+            selected_file <- available[best]
+            
           }
+          
         }
+        
+        # ----------------------------------
+        # STEP 3: Assign match
+        # ----------------------------------
+        
+        if (!is.null(selected_file)) {
+          
+          results[i, method_name] <- selected_file
+          
+          used_files[[method_name]] <- c(
+            used_files[[method_name]],
+            selected_file
+          )
+          
+          message(
+            "RAW: ", basename(raw_file),
+            " | Method: ", method_name,
+            " | Match: ", basename(selected_file)
+          )
+          
+        } else {
+          
+          warning(
+            "No match found for RAW ",
+            basename(raw_file),
+            " in method ",
+            method_name
+          )
+          
+        }
+        
       }
+      
     }
     
-    results
+    return(results)
+    
   }
+  
   output$validate_parameters_button <- renderUI({
     
 
@@ -2057,7 +2125,7 @@ Shiny.setInputValue(
       }
       
     }
-    
+
     
     html <- c(
       html,
