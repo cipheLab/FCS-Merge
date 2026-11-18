@@ -714,31 +714,31 @@ server <- function(input, output, session){
     
   })
  
-  match_fcs_files <- function(raw_files, method_sources) {
+    match_fcs_files <- function(raw_files, method_sources) {
     
-    if (length(raw_files) == 0) {
+    if (length(raw_files) == 0)
       stop("No RAW FCS files found.")
-    }
-    
-    raw_files <- raw_files[file.exists(raw_files)]
-    
-    if (length(raw_files) == 0) {
-      stop("No valid RAW FCS files found.")
-    }
     
     results <- data.frame(
       raw_file = raw_files,
       stringsAsFactors = FALSE
     )
     
+    # Une colonne par méthode, mais un seul match autorisé par RAW
+    for (method_name in names(method_sources)) {
+      results[[method_name]] <- NA_character_
+    }
+    
+    # Récupération de tous les fichiers Method
+    candidates <- list()
+    
     for (method_name in names(method_sources)) {
       
       source <- method_sources[[method_name]]
       
-  
       if (length(source) == 1 && dir.exists(source)) {
         
-        method_files <- list.files(
+        files <- list.files(
           source,
           pattern = "\\.fcs$",
           full.names = TRUE,
@@ -747,98 +747,104 @@ server <- function(input, output, session){
         
       } else {
         
-        method_files <- source[
-          file.exists(source)
-        ]
+        files <- source[file.exists(source)]
         
-        method_files <- method_files[
-          grepl("\\.fcs$", method_files, ignore.case = TRUE)
+        files <- files[
+          grepl("\\.fcs$", files, ignore.case = TRUE)
         ]
-        
       }
+      
+      if (length(files) > 0) {
+        
+        candidates[[method_name]] <- data.frame(
+          file = files,
+          method = method_name,
+          stringsAsFactors = FALSE
+        )
+      }
+    }
     
-      matched <- rep(NA_character_, length(raw_files))
+    candidates <- do.call(rbind, candidates)
+    
+    if (is.null(candidates) || nrow(candidates) == 0)
+      return(results)
+    
+    method_names <- tools::file_path_sans_ext(
+      basename(candidates$file)
+    )
+    
+    for (i in seq_along(raw_files)) {
       
-
-      if (length(method_files) == 0) {
-        results[[method_name]] <- matched
-        next
-      }
-      
-      method_names <- tools::file_path_sans_ext(
-        basename(method_files)
+      raw_name <- tools::file_path_sans_ext(
+        basename(raw_files[i])
       )
       
-      for (i in seq_along(raw_files)) {
+      # Comparaison avec TOUS les fichiers Method
+      scores <- stringdist::stringdist(
+        raw_name,
+        method_names,
+        method = "jw"
+      )
+      
+      best <- which.min(scores)
+      
+      if (is.finite(scores[best]) && scores[best] < 0.25) {
         
-        raw_name <- tools::file_path_sans_ext(
-          basename(raw_files[i])
+        results[i, candidates$method[best]] <-
+          candidates$file[best]
+        
+      } else {
+        
+        # Fallback : comparaison du nombre de cellules
+        raw_fcs <- tryCatch(
+          flowCore::read.FCS(
+            raw_files[i],
+            transformation = FALSE,
+            truncate_max_range = FALSE
+          ),
+          error = function(e) NULL
         )
         
-        scores <- stringdist::stringdist(
-          raw_name,
-          method_names,
-          method = "jw"
-        )
-        
-        best <- which.min(scores)
-        
-        if (
-          length(best) > 0 &&
-          is.finite(scores[best]) &&
-          scores[best] < 0.25
-        ) {
+        if (!is.null(raw_fcs)) {
           
-          matched[i] <- method_files[best]
+          raw_cells <- nrow(flowCore::exprs(raw_fcs))
           
-        } else {
-          
-          raw_fcs <- tryCatch(
-            read_fcs_with_compensation(raw_files[1]),
-            error = function(e) NULL
+          cell_diff <- vapply(
+            candidates$file,
+            function(f) {
+              
+              fcs <- tryCatch(
+                flowCore::read.FCS(
+                  f,
+                  transformation = FALSE,
+                  truncate_max_range = FALSE
+                ),
+                error = function(e) NULL
+              )
+              
+              if (is.null(fcs))
+                return(Inf)
+              
+              abs(
+                nrow(flowCore::exprs(fcs)) - raw_cells
+              )
+            },
+            numeric(1)
           )
           
-          if (!is.null(raw_fcs)) {
-            raw_cells <- nrow(flowCore::exprs(raw_fcs))
+          if (any(is.finite(cell_diff))) {
             
-            cell_diff <- vapply(
-              method_files,
-              function(f) {
-                
-                fcs <- tryCatch(
-                  read_fcs_with_compensation(f),
-                  error = function(e) NULL
-                )
-                
-                if (is.null(fcs)) {
-                  return(Inf)
-                }
-                
-                abs(
-                  nrow(flowCore::exprs(fcs)) - raw_cells
-                )
-                
-              },
-              numeric(1)
-            )
+            best <- which.min(cell_diff)
             
-            if (any(is.finite(cell_diff))) {
-              matched[i] <- method_files[which.min(cell_diff)]
-            }
-            
+            results[i, candidates$method[best]] <-
+              candidates$file[best]
           }
-          
         }
-        
       }
-      
-      results[[method_name]] <- matched
-      
     }
     
     results
   }
-
   output$validate_parameters_button <- renderUI({
     
 
